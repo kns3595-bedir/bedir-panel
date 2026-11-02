@@ -1,4 +1,4 @@
-/* Operasyon paneli – istemci v2 (sade, mobil öncelikli). Arayüzü kendisi çizer: index.html sadece yükleyici. */
+/* Operasyon paneli – istemci v3: fiyat önerisi yok, karayolu km + gerçek rota çizgisi, teklif metni şablonu. index.html sadece yükleyici. */
 (function () {
 'use strict';
 const OFFLINE = !!window.EMBEDDED_DATA;
@@ -10,7 +10,6 @@ let D = null, view = 'bugun', sub = 'yuk', sel = null, showAll = false, sortStat
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ncc = (c) => (c === 'UK' ? 'GB' : (c || ''));
-const money = (p, c) => { if (!p) return '—'; const s = Number(p).toLocaleString('tr-TR', {maximumFractionDigits: 0}); return c === 'EUR' ? s + ' €' : c === 'USD' ? s + ' $' : s + ' ' + (c || ''); };
 const gmail = (t) => t ? 'https://mail.google.com/mail/u/0/#all/' + t : '';
 const iso2tr = (s) => s ? s.slice(8, 10) + '.' + s.slice(5, 7) + '.' + s.slice(0, 4) : '';
 function hav(a, b) { const R = 6371, r = Math.PI / 180; const dLa = (b[0]-a[0])*r, dLo = (b[1]-a[1])*r; const h = Math.sin(dLa/2)**2 + Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dLo/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
@@ -23,7 +22,7 @@ async function copyText(t) {
   catch (e) { const ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
   toast('✓ Teklif kopyalandı – Gmail\'de yanıta yapıştır');
 }
-/* "Iron Mountain, Milton Keynes MK6 4AD, UK" → "Milton Keynes" */
+/* "Iron Mountain, Milton Keynes MK6 4AD, UK" → "Milton Keynes, İngiltere" */
 function place(addr, cc) {
   let a = String(addr || '').replace(/\([^)]*\)/g, ' ').split('/')[0];
   const segs = a.split(',').map(s => s.trim()).filter(s => s && !COUNTRY_WORDS.test(s));
@@ -31,20 +30,33 @@ function place(addr, cc) {
   if (segs.length > 1 && /^(OSB)$/i.test(s)) s = segs[segs.length - 2];
   const c = ncc(cc);
   if (!s || s.length < 3) return CC[c] || c || '?';
-  return (c && c !== 'TR' && CC[c] && !s.includes(CC[c])) ? s + ' (' + CC[c] + ')' : s;
+  return (c && CC[c] && !s.includes(CC[c])) ? s + ', ' + CC[c] : s;
 }
-function routeTxt(it) { return place(it.cikis_adres, it.cikis) + ' → ' + place(it.varis_adres, it.varis); }
+function routeTxt(it) { return it ? place(it.cikis_adres, it.cikis) + ' → ' + place(it.varis_adres, it.varis) : ''; }
 function cleanCo(s) { return String(s || '').replace(/\s*\([^)]*\)\s*$/, '').trim(); }
-function winTxt(w, raw) {
+function winTxt(w, raw, unk) {
+  if (unk) return '';
+  if (/hazır|müsait/i.test(raw || '')) return 'hazır';
   if (!w) return raw || '';
   const f = (s) => s.slice(8, 10) + '.' + s.slice(5, 7);
-  if (/hazır|müsait/i.test(raw || '')) return 'hazır';
   return w[0] === w[1] ? f(w[0]) : f(w[0]).slice(0, 2) + '–' + f(w[1]);
 }
-const PLAIN_FLAG = {'teyit gerekir': 'ilan eski, hâlâ geçerli mi sor', 'tarih belirtilmemiş': 'yükleme tarihi yazmıyor', 'araç yolda – boşalma teyit': 'aracımız şu an yolda, boşalınca'};
+const kmTxt = (km, approx) => km == null ? '—' : (approx ? '~' : '') + Number(km).toLocaleString('tr-TR') + ' km';
+const PLAIN_FLAG = {'teyit gerekir': 'ilan eski, hâlâ geçerli mi sor', 'tarih belirtilmemiş': 'yükleme tarihi yazmıyor', 'araç yolda – boşalma teyit': 'aracımız şu an yolda, boşalınca', 'GPS veri yok': 'aracın konumu gelmiyor'};
 const plainFlags = (fs) => (fs || []).map(f => PLAIN_FLAG[f] || f).join(' · ');
 const FL_ST = {driving: 'yolda', standing: 'duruyor', nodata: 'sinyal yok'};
 const cityOf = (yakin) => String(yakin || '').replace(/\s*\(.*$/, '');
+/* Google polyline (OSRM) çözücü */
+function decodePoly(str) { let i = 0, lat = 0, lng = 0; const out = []; while (i < str.length) { let b, sh = 0, r = 0; do { b = str.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32); lat += (r & 1) ? ~(r >> 1) : (r >> 1); sh = 0; r = 0; do { b = str.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32); lng += (r & 1) ? ~(r >> 1) : (r >> 1); out.push([lat / 1e5, lng / 1e5]); } return out; }
+/* ---------- fiyat (sadece bu ekranda, kaydedilmez) ---------- */
+const PRICES = {};
+function priceStr(id, lang) { const p = PRICES[id]; if (!p || !p.v) return ''; const n = Number(String(p.v).replace(/[^\d]/g, '')); if (!n) return '';
+  return lang === 'tr' ? n.toLocaleString('tr-TR') + ' ' + p.c : p.c + ' ' + n.toLocaleString('en-US'); }
+function quoteText(it) { const ps = priceStr(it.id, it.dil); return String(it.teklif_metni || '').replace('[FİYAT]', ps || '[FİYAT]'); }
+function previewHtml(it) { return esc(quoteText(it)).replace('[FİYAT]', '<mark>[FİYAT]</mark>'); }
+function priceBox(it) { const p = PRICES[it.id] || {v: '', c: 'EUR'};
+  return '<div class="priceRow"><label class="pl">Fiyatın</label><input class="pin" inputmode="numeric" placeholder="ör. 4500" data-pid="' + esc(it.id) + '" value="' + esc(p.v) + '">' +
+    '<select class="pcur" data-pid="' + esc(it.id) + '">' + ['EUR', 'USD', 'TL'].map(c => '<option' + (c === p.c ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></div>'; }
 
 /* ---------- iskelet ---------- */
 const root = $('appRoot') || document.body.appendChild(Object.assign(document.createElement('div'), {id: 'appRoot'}));
@@ -53,7 +65,8 @@ root.innerHTML =
   '<header class="hdr"><div class="hl"><div class="logo">B</div><div><div class="ttl">{{TITLE}}</div><div id="upd" class="upd">Yükleniyor…</div></div></div>' +
   '<div class="hr"><button id="btnReload" class="hbtn" title="Yenile">↻</button>' + (OFFLINE ? '' : '<a id="btnLogout" class="hbtn" href="' + (SRC ? '#' : '/logout') + '">Çıkış</a>') + '</div></header>' +
   '<nav class="nav"><button data-v="bugun" class="on">Bugün</button><button data-v="detay">Detay</button></nav>' +
-  '<div class="wrap"><section class="colMap"><div class="mapBox"><div id="map"></div><button id="btnAll" class="allBtn">Tüm yükleri göster</button></div><div id="sel"></div></section>' +
+  '<div class="wrap"><section class="colMap"><div class="mapBox" id="mapBox"><div id="map"></div>' +
+  '<button id="btnFs" class="fsBtn" title="Tam ekran">⛶</button><button id="btnAll" class="allBtn">Tüm yükleri göster</button></div><div id="sel"></div></section>' +
   '<section id="main" class="colMain"></section></div><div id="toast" class="toast"></div>';
 document.querySelectorAll('.nav button').forEach(b => b.onclick = () => { view = b.dataset.v; document.querySelectorAll('.nav button').forEach(x => x.classList.toggle('on', x === b)); render(); window.scrollTo({top: 0}); });
 
@@ -67,12 +80,13 @@ const clusterIcon = (cls) => (c) => { const n = c.getChildCount(); const s = n <
 const LY = {
   loads: L.markerClusterGroup({iconCreateFunction: clusterIcon('cl-load'), maxClusterRadius: 45, showCoverageOnHover: false}),
   trucks: L.markerClusterGroup({iconCreateFunction: clusterIcon('cl-truck'), maxClusterRadius: 40, showCoverageOnHover: false}),
-  quotes: L.layerGroup(), mt: L.layerGroup(), fleet: L.layerGroup().addTo(map), hq: L.layerGroup().addTo(map),
+  quotes: L.layerGroup().addTo(map), fleet: L.layerGroup().addTo(map), hq: L.layerGroup().addTo(map),
 };
 const hlLayer = L.layerGroup().addTo(map);
 const icon = (cls, txt, s) => L.divIcon({html: '<div class="mk ' + cls + '" style="width:' + s + 'px;height:' + s + 'px">' + (txt || '') + '</div>', className: '', iconSize: [s, s], iconAnchor: [s/2, s/2]});
-function setAll(on) { showAll = on; ['loads', 'trucks', 'quotes', 'mt'].forEach(k => on ? LY[k].addTo(map) : map.removeLayer(LY[k])); $('btnAll').textContent = on ? 'Sadece araçlarım' : 'Tüm yükleri göster'; $('btnAll').classList.toggle('on', on); }
+function setAll(on) { showAll = on; ['loads', 'trucks'].forEach(k => on ? LY[k].addTo(map) : map.removeLayer(LY[k])); $('btnAll').textContent = on ? 'Sadece araçlarım + teklifler' : 'Tüm yükleri göster'; $('btnAll').classList.toggle('on', on); }
 $('btnAll').onclick = () => setAll(!showAll);
+$('btnFs').onclick = () => { const b = $('mapBox'); const on = !b.classList.contains('fs'); b.classList.toggle('fs', on); document.body.classList.toggle('noScroll', on); $('btnFs').textContent = on ? '✕' : '⛶'; setTimeout(() => map.invalidateSize(), 60); };
 
 /* ---------- indeksler ---------- */
 let IDX = {};
@@ -84,66 +98,98 @@ function index() {
   D.mgroups.forEach(g => IDX.gByItem[g.item] = g);
 }
 const itemOf = (id) => IDX.load[id] || IDX.quote[id];
+const kindOf = (id) => IDX.quote[id] ? 'quote' : 'load';
 const truckOf = (id) => IDX.truck[id] || IDX.fleet[id];
 const isOpenQ = (q) => ['Teklif hazır', 'Yeni', 'Eşleşti'].includes(q.durum);
+/* yük için en iyi öz araç: eşleşmedeki (boş km'li) ya da en yakın aracımız */
+function ownTruckFor(it) {
+  const ms = (IDX.mByItem[it.id] || []).filter(m => m.arac_kaynak === 'filo' && m.bos_km != null).sort((a, b) => a.bos_km - b.bos_km);
+  if (ms.length) return {plaka: ms[0].arac, km: ms[0].bos_km, yaklasik: ms[0].bos_yaklasik, flags: ms[0].flags};
+  return it.yakin_arac || null;
+}
+
+/* ---------- kart (Bugün, seçim paneli ve harita balonu aynı bilgiyi gösterir) ---------- */
+function facts(it, kind) {
+  const date = kind === 'quote' ? (it.tarih || '') : winTxt(it.win, it.yukleme_tarihi, it.tarih_belirsiz);
+  const veh = kind === 'quote' ? it.arac : (it.vgrup || it.arac);
+  const cargo = kind === 'quote' ? it.yuk : [it.urun && !/genel kargo/i.test(it.urun) ? it.urun : '', it.agirlik, it.adet].filter(Boolean).join(' · ');
+  return '<div class="facts">' +
+    '<div><span>Yükleme</span><b>' + esc(date || 'tarih yazmıyor') + '</b></div>' +
+    '<div><span>Araç</span><b>' + esc(veh || '—') + (it.adr ? ' <span class="tag red">ADR</span>' : '') + '</b></div>' +
+    '<div class="wide"><span>Yük</span><b>' + esc(cargo || 'yazmıyor') + '</b></div></div>';
+}
+function ownLine(it) { const t = ownTruckFor(it); if (!t) return '';
+  return '<div class="own">🚚 En yakın aracımız <b>' + esc(t.plaka) + '</b> · yükleme yerine <b>' + kmTxt(t.km, t.yaklasik) + '</b> boş' + (t.flags && t.flags.length ? ' <span class="muted small">(' + esc(plainFlags(t.flags)) + ')</span>' : '') + '</div>'; }
+function card(it, kind, opts) {
+  opts = opts || {};
+  return '<div class="card' + (it.acil ? ' urgent' : '') + (opts.cls ? ' ' + opts.cls : '') + '" data-card="' + esc(it.id) + '">' +
+    '<div class="cTop"><div class="cName">' + esc(cleanCo(it.firma_k || it.firma)) + '</div><div>' + (it.acil ? '<span class="tag red">ACİL</span> ' : '') + '<span class="tag">' + esc(daysTxt(it.bekleme)) + '</span></div>' + (opts.close ? '<button class="x" id="selX" aria-label="Kapat">✕</button>' : '') + '</div>' +
+    '<div class="cRoute">' + esc(routeTxt(it)) + '</div>' +
+    '<div class="cKm">' + kmTxt(it.km, it.km_yaklasik) + ' <span>karayolu' + (it.km_yaklasik ? ' (yaklaşık)' : '') + '</span></div>' +
+    facts(it, kind) + ownLine(it) +
+    (it.teklif_metni ? priceBox(it) : '') +
+    '<div class="btnRow">' + (it.teklif_metni ? '<button class="big pri" data-copy="' + esc(it.id) + '">📋 Teklifi kopyala</button>' : '') + (it.link ? '<a class="big" target="_blank" rel="noopener" href="' + esc(it.link) + '">✉️ Gmail\'de aç</a>' : '') + '</div>' +
+    '<div class="cLinks">' + (opts.mapLink === false ? '' : '<a href="#" data-sel="' + kind + ':' + esc(it.id) + '">🗺 Haritada rota</a> · ') + (it.teklif_metni ? '<a href="#" data-show="' + esc(it.id) + '">Teklif metnini gör</a>' : '') + '</div>' +
+    (it.teklif_metni ? '<pre class="qt hidden" id="qt-' + esc(opts.close ? 's-' : '') + esc(it.id) + '">' + previewHtml(it) + '</pre>' : '') + '</div>';
+}
+function popupHtml(it, kind) {
+  const t = ownTruckFor(it);
+  return '<div class="pop"><div class="pT">' + esc(cleanCo(it.firma_k || it.firma)) + '</div><div class="pR">' + esc(routeTxt(it)) + '</div>' +
+    '<div class="pK">' + kmTxt(it.km, it.km_yaklasik) + ' <span>karayolu</span></div>' + facts(it, kind) +
+    (t ? '<div class="own">🚚 <b>' + esc(t.plaka) + '</b> · ' + kmTxt(t.km, t.yaklasik) + ' boş</div>' : '') +
+    (it.teklif_metni ? priceBox(it) + '<button class="big pri" data-copy="' + esc(it.id) + '">📋 Teklifi kopyala</button>' : '') +
+    '<div class="cLinks"><a href="#" data-sel="' + kind + ':' + esc(it.id) + '">Rotayı göster</a>' + (it.link ? ' · <a target="_blank" rel="noopener" href="' + esc(it.link) + '">Gmail</a>' : '') + '</div></div>';
+}
 
 function drawMap() {
   Object.values(LY).forEach(l => l.clearLayers());
-  const pl = (l) => '<b>' + esc(cleanCo(l.firma_k)) + '</b><br>' + esc(routeTxt(l)) + '<br>' + esc(winTxt(l.win, l.yukleme_tarihi)) + ' · ' + money(l.fiyat, l.para) + '<br><a href="#" data-sel="load:' + esc(l.id) + '">Uygun araçlar</a>';
-  LY.loads.addLayers(D.loads.filter(l => l.o).map(l => L.marker([l.o[0], l.o[1]], {icon: icon('mk-load', '', 14)}).bindPopup(pl(l))));
-  LY.trucks.addLayers(D.trucks.filter(t => t.p).map(t => L.marker([t.p[0], t.p[1]], {icon: icon('mk-truck', '', 14)}).bindPopup('<b>' + esc(cleanCo(t.firma_k)) + '</b><br>Boş araç: ' + esc(t.bolge) + '<br>' + esc(t.arac) + ' · ' + esc(t.tarih))));
-  D.quotes.filter(q => q.o && isOpenQ(q)).forEach(q => L.marker([q.o[0], q.o[1]], {icon: icon('mk-quote', '€', 22)}).bindPopup('<b>' + esc(cleanCo(q.firma_k)) + '</b><br>' + esc(routeTxt(q)) + '<br>' + money(q.fiyat, q.para) + '<br><a href="#" data-sel="quote:' + esc(q.id) + '">Göster</a>').addTo(LY.quotes));
-  D.mt.filter(m => m.acik && m.o && m.d).forEach(m => L.polyline([[m.o[0], m.o[1]], [m.d[0], m.d[1]]], {color: '#64748b', weight: 2, opacity: .5, dashArray: '6 6'}).bindTooltip('{{MT}}: ' + m.cikis + ' → ' + m.varis + (m.cekici ? ' · ' + m.cekici : '')).addTo(LY.mt));
+  LY.loads.addLayers(D.loads.filter(l => l.o).map(l => L.marker([l.o[0], l.o[1]], {icon: icon('mk-load', '', 14)}).bindPopup(() => popupHtml(l, 'load'), {maxWidth: 320, minWidth: 260})));
+  LY.trucks.addLayers(D.trucks.filter(t => t.p).map(t => L.marker([t.p[0], t.p[1]], {icon: icon('mk-truck', '', 14)}).bindPopup('<div class="pop"><div class="pT">' + esc(cleanCo(t.firma_k)) + '</div>Boş araç: ' + esc(t.bolge) + '<br>' + esc(t.arac) + ' · ' + esc(t.tarih) + (t.link1 ? '<div class="cLinks"><a target="_blank" rel="noopener" href="' + esc(t.link1) + '">Gmail</a></div>' : '') + '</div>')));
+  D.quotes.filter(q => q.o && isOpenQ(q)).forEach(q => L.marker([q.o[0], q.o[1]], {icon: icon('mk-quote', '€', 26), zIndexOffset: 800}).bindPopup(() => popupHtml(q, 'quote'), {maxWidth: 320, minWidth: 260}).addTo(LY.quotes));
   D.fleet.filter(x => x.p).forEach(x => {
     const cls = 'mk-fleet' + (x.eski || x.durum === 'nodata' ? ' old' : '');
     L.marker([x.p[0], x.p[1]], {icon: L.divIcon({html: '<div class="plt ' + cls + '">' + esc(x.plaka) + '</div>', className: '', iconSize: null, iconAnchor: [34, 12]}), zIndexOffset: 500})
-      .bindPopup('<b>' + esc(x.plaka) + '</b><br>' + esc(cityOf(x.yakin)) + ' – ' + esc(FL_ST[x.durum] || x.durum) + (x.hiz ? ' (' + x.hiz + ' km/s)' : '') + '<br>Son sinyal: ' + esc(x.son || '—') + '<br><a href="#" data-sel="fleet:' + esc(x.plaka) + '">Bu araca uygun yükler</a>').addTo(LY.fleet);
+      .bindPopup('<div class="pop"><div class="pT">🚚 ' + esc(x.plaka) + '</div>' + esc(cityOf(x.yakin)) + ' – ' + esc(FL_ST[x.durum] || x.durum) + (x.hiz ? ' (' + x.hiz + ' km/s)' : '') + '<br><span class="muted">Son sinyal: ' + esc(x.son || '—') + '</span><div class="cLinks"><a href="#" data-sel="fleet:' + esc(x.plaka) + '">Bu araca uygun yükler</a></div></div>').addTo(LY.fleet);
   });
   const hq = D.hq || {p: [38.73, 35.48], ad: 'Merkez'};
   L.marker(hq.p, {icon: icon('mk-hq', '★', 30), zIndexOffset: 1000}).bindTooltip('Merkez', {direction: 'top', offset: [0, -14]}).bindPopup('<b>' + esc(hq.ad) + '</b><br>' + esc(hq.adres || '')).addTo(LY.hq);
   if (firstFit) { firstFit = false; fitFleet(); }
 }
 function fitFleet() { const pts = D.fleet.filter(x => x.p).map(x => [x.p[0], x.p[1]]); pts.push((D.hq || {p: [38.73, 35.48]}).p); map.fitBounds(L.latLngBounds(pts).pad(0.15), {maxZoom: 7}); }
-map.on('popupopen', (e) => { e.popup.getElement().querySelectorAll('[data-sel]').forEach(a => a.addEventListener('click', (ev) => { ev.preventDefault(); const [k, id] = a.dataset.sel.split(':'); select(k, id); })); });
+map.on('popupopen', (e) => { const el = e.popup.getElement(); bindCommon(el); el.querySelectorAll('[data-sel]').forEach(a => a.addEventListener('click', () => map.closePopup())); });
 
-/* ---------- eşleşmeler ---------- */
-function matchesForItem(id) {
-  const it = itemOf(id); if (!it) return [];
-  const raw = (IDX.mByItem[id] || []).map(m => Object.assign({alt: false}, m));
-  const have = new Set(raw.map(m => m.arac)); const g = IDX.gByItem[id];
-  (g ? g.alternatif : []).forEach(a => { if (have.has(a)) return; const t = truckOf(a); if (!t || !t.p || !it.o) return; raw.push({arac: a, arac_kaynak: IDX.fleet[a] ? 'filo' : 'ilan', km: Math.round(hav(it.o, t.p)), gun: null, puan: 0, flags: [], alt: true}); have.add(a); });
-  return raw.sort((a, b) => (IDX.fleet[b.arac] ? 1 : 0) - (IDX.fleet[a.arac] ? 1 : 0) || (b.puan || 0) - (a.puan || 0) || a.km - b.km);
-}
-/* Öz araçlarımız için en iyi yük: araç başına 1 satır */
-function fleetDeals() {
-  const best = {};
-  D.matches.filter(m => m.arac_kaynak === 'filo' && m.tur === 'yük' && !(m.flags || []).includes('teyit gerekir')).forEach(m => { if (!best[m.arac] || m.puan > best[m.arac].puan) best[m.arac] = m; });
-  D.mgroups.filter(g => g.tur === 'yük' && !(g.flags || []).includes('teyit gerekir')).forEach(g => [g.arac].concat(g.alternatif || []).forEach(a => {
-    if (!IDX.fleet[a] || best[a]) return; const it = IDX.load[g.item], t = IDX.fleet[a]; if (!it || !it.o || !t.p) return;
-    const km = Math.round(hav(it.o, t.p)); if (km <= 250) best[a] = {item: g.item, arac: a, km, gun: g.gun, puan: g.puan - 5 - km / 50, flags: g.flags, tur: 'yük'};
-  }));
-  return Object.values(best).sort((a, b) => b.puan - a.puan);
-}
-
+/* ---------- seçili iş: gerçek yol çizgisi + km etiketi, en yakın aracımız noktalı çizgi ---------- */
+function kmLabel(latlng, txt, cls) { return L.marker(latlng, {icon: L.divIcon({html: '<div class="kmL ' + (cls || '') + '">' + txt + '</div>', className: '', iconSize: null}), interactive: false, zIndexOffset: 1200}); }
 function highlight(kind, id) {
   hlLayer.clearLayers(); const bounds = [];
-  const ring = (p, color, r) => { L.circleMarker(p, {radius: r, color, weight: 3, fillOpacity: .12}).addTo(hlLayer); bounds.push(p); };
   if (kind === 'load' || kind === 'quote') {
     const it = itemOf(id); if (!it || !it.o) return;
-    const o = [it.o[0], it.o[1]];
-    L.marker(o, {icon: icon(kind === 'quote' ? 'mk-quote' : 'mk-load', kind === 'quote' ? '€' : '', 22), zIndexOffset: 900}).bindTooltip('Yükleme: ' + place(it.cikis_adres, it.cikis), {permanent: true, direction: 'right', offset: [12, 0]}).addTo(hlLayer); bounds.push(o);
-    if (it.d) { const d = [it.d[0], it.d[1]]; L.polyline([o, d], {color: '#1d4ed8', weight: 3, opacity: .75, dashArray: '8 8'}).addTo(hlLayer); L.circleMarker(d, {radius: 8, color: '#1d4ed8', fillColor: '#fff', fillOpacity: 1, weight: 3}).bindTooltip('Teslim: ' + place(it.varis_adres, it.varis), {permanent: true, direction: 'right', offset: [10, 0]}).addTo(hlLayer); bounds.push(d); }
-    matchesForItem(id).slice(0, 6).forEach(m => { const t = truckOf(m.arac); if (!t || !t.p) return; const p = [t.p[0], t.p[1]];
-      L.polyline([o, p], {color: '#f59e0b', weight: 3.5, opacity: .9}).addTo(hlLayer);
-      if (!IDX.fleet[m.arac]) L.marker(p, {icon: icon('mk-truck', '', 16)}).bindTooltip(cleanCo(t.firma_k) + ' · ' + m.km + ' km').addTo(hlLayer);
-      ring(p, '#f59e0b', 16); });
+    const o = [it.o[0], it.o[1]]; bounds.push(o);
+    if (it.d) {
+      const d = [it.d[0], it.d[1]];
+      const pts = it.rota ? decodePoly(it.rota) : [o, d];
+      L.polyline(pts, {color: '#ffffff', weight: 9, opacity: .9}).addTo(hlLayer);
+      L.polyline(pts, {color: '#1d4ed8', weight: 5, opacity: .95, dashArray: it.rota ? null : '10 8'}).addTo(hlLayer);
+      kmLabel(pts[Math.floor(pts.length / 2)], kmTxt(it.km, it.km_yaklasik)).addTo(hlLayer);
+      L.circleMarker(d, {radius: 9, color: '#1d4ed8', fillColor: '#fff', fillOpacity: 1, weight: 4}).bindTooltip('Teslim: ' + place(it.varis_adres, it.varis), {permanent: true, direction: 'right', offset: [10, 0], className: 'tipB'}).addTo(hlLayer);
+      pts.forEach(p => bounds.push(p));
+    }
+    L.circleMarker(o, {radius: 10, color: '#fff', fillColor: '#16a34a', fillOpacity: 1, weight: 3}).bindTooltip('Yükleme: ' + place(it.cikis_adres, it.cikis), {permanent: true, direction: 'right', offset: [12, 0], className: 'tipB'}).addTo(hlLayer);
+    const t = ownTruckFor(it); const f = t && IDX.fleet[t.plaka];
+    if (f && f.p) { const p = [f.p[0], f.p[1]];
+      L.polyline([p, o], {color: '#ea580c', weight: 4, opacity: .95, dashArray: '2 9', lineCap: 'round'}).addTo(hlLayer);
+      kmLabel([(p[0] + o[0]) / 2, (p[1] + o[1]) / 2], '🚚 ' + esc(t.plaka) + ' · ' + kmTxt(t.km, t.yaklasik) + ' boş', 'own').addTo(hlLayer); bounds.push(p); }
   } else {
-    const t = truckOf(id); if (!t || !t.p) return; const p = [t.p[0], t.p[1]]; ring(p, '#f59e0b', 18);
-    (IDX.mByTruck[id] || []).slice().sort((a, b) => b.puan - a.puan).slice(0, 6).forEach(m => { const it = itemOf(m.item); if (!it || !it.o) return; const o = [it.o[0], it.o[1]]; L.polyline([p, o], {color: '#f59e0b', weight: 3, opacity: .9}).addTo(hlLayer); L.marker(o, {icon: icon('mk-load', '', 16)}).bindTooltip(cleanCo(it.firma_k)).addTo(hlLayer); bounds.push(o); });
+    const t = truckOf(id); if (!t || !t.p) return; const p = [t.p[0], t.p[1]]; bounds.push(p);
+    L.circleMarker(p, {radius: 18, color: '#ea580c', weight: 3, fillOpacity: .12}).addTo(hlLayer);
+    (IDX.mByTruck[id] || []).slice().sort((a, b) => (a.bos_km ?? a.km) - (b.bos_km ?? b.km)).slice(0, 6).forEach(m => { const it = itemOf(m.item); if (!it || !it.o) return; const o = [it.o[0], it.o[1]];
+      L.polyline([p, o], {color: '#ea580c', weight: 3, opacity: .9, dashArray: '2 8', lineCap: 'round'}).addTo(hlLayer);
+      L.marker(o, {icon: icon('mk-load', '', 16)}).bindTooltip(cleanCo(it.firma_k) + ' · ' + kmTxt(m.bos_km ?? m.km, m.bos_km == null || m.bos_yaklasik) + ' boş').addTo(hlLayer); bounds.push(o); });
   }
-  if (bounds.length > 1) map.fitBounds(L.latLngBounds(bounds).pad(0.3), {maxZoom: 9}); else if (bounds.length) map.setView(bounds[0], 8);
+  const wide = window.innerWidth >= 900 && $('sel').innerHTML;
+  const pad = wide ? {paddingTopLeft: [Math.min(380, $('mapBox').clientWidth * .46) + 30, 30], paddingBottomRight: [30, 60], maxZoom: 10} : {padding: [24, 24], maxZoom: 10};
+  if (bounds.length > 1) map.fitBounds(L.latLngBounds(bounds), pad); else if (bounds.length) map.setView(bounds[0], 8);
 }
-
 function select(kind, id) { sel = {kind, id}; renderSel(); highlight(kind, id); if (window.innerWidth < 900) document.querySelector('.colMap').scrollIntoView({behavior: 'smooth', block: 'start'}); }
 function renderSel() {
   const box = $('sel');
@@ -151,58 +197,46 @@ function renderSel() {
   let h = '';
   if (sel.kind === 'load' || sel.kind === 'quote') {
     const it = itemOf(sel.id); if (!it) { sel = null; return renderSel(); }
-    const ms = matchesForItem(sel.id);
-    h = '<div class="selHd"><div><div class="selT">' + esc(cleanCo(it.firma_k)) + '</div><div class="selR">' + esc(routeTxt(it)) + '</div><div class="muted">' + esc(sel.kind === 'quote' ? it.yuk : 'Yükleme ' + winTxt(it.win, it.yukleme_tarihi) + ' · ' + (it.vgrup || '') + (it.adr ? ' · ADR' : '')) + '</div></div><button class="x" id="selX" aria-label="Kapat">✕</button></div>' +
-      '<div class="selP">' + money(it.fiyat, it.para) + ' <span class="muted small">önerilen fiyat</span></div>' +
-      (ms.length ? '<div class="selSub">Yakındaki araçlar</div>' + ms.slice(0, 6).map(m => { const t = truckOf(m.arac) || {}; const own = !!IDX.fleet[m.arac];
-        return '<div class="line"><b>' + (own ? '🚚 ' + esc(m.arac) + ' (bizim)' : esc(cleanCo(t.firma_k))) + '</b> – ' + m.km + ' km uzakta' + (m.gun ? ', tarih ' + m.gun + ' gün kayık' : '') + (own ? '' : '<div class="muted small">' + esc(t.bolge || '') + ' · ' + esc(t.arac || '') + (t.link1 ? ' · <a target="_blank" rel="noopener" href="' + esc(t.link1) + '">mail</a>' : '') + '</div>') + (m.flags && m.flags.length ? '<div class="muted small">' + esc(plainFlags(m.flags)) + '</div>' : '') + '</div>'; }).join('')
-        : '<div class="line muted">Yakında uygun araç yok.</div>') +
-      '<div class="btnRow">' + (it.teklif_metni ? '<button class="big pri" data-copy="' + esc(it.id) + '">📋 Teklifi kopyala</button>' : '') + (it.link ? '<a class="big" target="_blank" rel="noopener" href="' + esc(it.link) + '">✉️ Gmail\'de aç</a>' : '') + '</div>';
+    h = card(it, sel.kind, {close: true, mapLink: false, cls: 'selCard'});
   } else {
     const t = truckOf(sel.id); if (!t) { sel = null; return renderSel(); }
-    const own = !!IDX.fleet[sel.id]; const ms = (IDX.mByTruck[sel.id] || []).slice().sort((a, b) => b.puan - a.puan);
-    h = '<div class="selHd"><div><div class="selT">' + (own ? '🚚 ' + esc(t.plaka) : esc(cleanCo(t.firma_k))) + '</div><div class="muted">' + (own ? esc(cityOf(t.yakin)) + ' – ' + esc(FL_ST[t.durum] || t.durum) + ' · son sinyal ' + esc(t.son || '—') : esc(t.bolge) + ' · ' + esc(t.arac)) + '</div></div><button class="x" id="selX" aria-label="Kapat">✕</button></div>' +
-      (ms.length ? '<div class="selSub">Bu araca uygun yükler</div>' + ms.slice(0, 8).map(m => { const it = itemOf(m.item) || {}; return '<div class="line click" data-item="' + esc(m.item) + '" data-kind="' + (m.tur === 'teklif' ? 'quote' : 'load') + '"><b>' + esc(cleanCo(it.firma_k)) + '</b> – ' + esc(routeTxt(it)) + '<div class="muted small">' + esc(winTxt(it.win, it.yukleme_tarihi)) + ' · ' + m.km + ' km · <b class="money">' + money(it.fiyat, it.para) + '</b></div></div>'; }).join('') : '<div class="line muted">Şu an bu araca uygun yük yok.</div>');
+    const own = !!IDX.fleet[sel.id]; const ms = (IDX.mByTruck[sel.id] || []).slice().sort((a, b) => (a.bos_km ?? a.km) - (b.bos_km ?? b.km));
+    h = '<div class="card selCard"><div class="cTop"><div><div class="cName">' + (own ? '🚚 ' + esc(t.plaka) : esc(cleanCo(t.firma_k))) + '</div><div class="muted">' + (own ? esc(cityOf(t.yakin)) + ' – ' + esc(FL_ST[t.durum] || t.durum) + ' · son sinyal ' + esc(t.son || '—') : esc(t.bolge) + ' · ' + esc(t.arac)) + '</div></div><button class="x" id="selX" aria-label="Kapat">✕</button></div>' +
+      (ms.length ? '<div class="selSub">Bu araca uygun yükler</div>' + ms.slice(0, 8).map(m => { const it = itemOf(m.item) || {};
+        return '<div class="line click" data-item="' + esc(m.item) + '" data-kind="' + (m.tur === 'teklif' ? 'quote' : 'load') + '"><b>' + esc(cleanCo(it.firma_k)) + '</b> – ' + esc(routeTxt(it)) + '<div class="muted small">' + esc(winTxt(it.win, it.yukleme_tarihi, it.tarih_belirsiz) || 'tarih yazmıyor') + ' · boş ' + kmTxt(m.bos_km ?? m.km, m.bos_km == null || m.bos_yaklasik) + ' · yol ' + kmTxt(it.km, it.km_yaklasik) + '</div></div>'; }).join('') : '<div class="line muted">Şu an bu araca uygun yük yok.</div>') + '</div>';
   }
-  box.innerHTML = '<div class="selCard">' + h + '</div>';
+  box.innerHTML = h;
   $('selX').onclick = () => { sel = null; renderSel(); fitFleet(); };
   bindCommon(box);
   box.querySelectorAll('[data-item]').forEach(r => r.onclick = () => select(r.dataset.kind, r.dataset.item));
 }
 
 /* ---------- Bugün ---------- */
-function quoteCard(q) {
-  const g = IDX.gByItem[q.id]; const own = g && IDX.fleet[g.arac];
-  return '<div class="card' + (q.acil ? ' urgent' : '') + '">' +
-    '<div class="cTop"><div class="cName">' + esc(cleanCo(q.firma_k)) + '</div>' + (q.acil ? '<span class="tag red">ACİL</span>' : '') + '</div>' +
-    '<div class="cRoute">' + esc(routeTxt(q)) + '</div>' +
-    '<div class="cSub">' + esc(q.yuk) + '</div>' +
-    '<div class="cPrice">' + money(q.fiyat, q.para) + '</div>' +
-    '<div class="cSub">' + esc(daysTxt(q.bekleme)) + (own ? ' · <b>aracımız ' + esc(g.arac) + ' ' + g.km + ' km yakında</b>' : '') + '</div>' +
-    '<div class="btnRow"><button class="big pri" data-copy="' + esc(q.id) + '">📋 Teklifi kopyala</button>' + (q.link ? '<a class="big" target="_blank" rel="noopener" href="' + esc(q.link) + '">✉️ Gmail\'de aç</a>' : '') + '</div>' +
-    '<div class="cLinks"><a href="#" data-sel="quote:' + esc(q.id) + '">Haritada göster</a> · <a href="#" data-show="' + esc(q.id) + '">Metni gör</a></div>' +
-    '<pre class="qt hidden" id="qt-' + esc(q.id) + '">' + esc(q.teklif_metni || '') + '</pre></div>';
+function fleetDeals() {
+  const best = {};
+  D.matches.filter(m => m.arac_kaynak === 'filo' && m.tur === 'yük' && !(m.flags || []).includes('teyit gerekir')).forEach(m => { const k = m.bos_km ?? m.km; if (!best[m.arac] || k < (best[m.arac].bos_km ?? best[m.arac].km) || (k === (best[m.arac].bos_km ?? best[m.arac].km) && m.puan > best[m.arac].puan)) best[m.arac] = m; });
+  return Object.values(best).sort((a, b) => (a.bos_km ?? a.km) - (b.bos_km ?? b.km));
 }
 function renderToday() {
   const open = D.quotes.filter(isOpenQ).sort((a, b) => (b.acil|0) - (a.acil|0) || (a.bekleme||0) - (b.bekleme||0));
   const deals = fleetDeals();
-  const wait = D.quotes.filter(q => !isOpenQ(q)).map(q => ({ad: cleanCo(q.firma_k), r: routeTxt(q), s: q.sent, g: q.bekleme, link: q.link}))
+  const wait = D.quotes.filter(q => !isOpenQ(q)).map(q => ({ad: cleanCo(q.firma_k), r: routeTxt(q), s: q.sent, g: q.bekleme, link: q.link, km: q.km, ap: q.km_yaklasik}))
     .concat(D.other.filter(o => o.durum !== 'Yeni').map(o => ({ad: cleanCo(o.firma), r: o.konu, s: '', g: (() => { const d = parseTR(o.gelis); return d ? Math.floor((new Date(D.bugun) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5) : null; })(), link: gmail(o.thread)})))
     .sort((a, b) => (b.g || 0) - (a.g || 0));
   const newMail = D.other.filter(o => o.durum === 'Yeni');
-  let h = '<div class="blk"><h2>1 · Teklif ver <span class="cnt">' + open.length + '</span></h2>' + (open.map(quoteCard).join('') || '<div class="empty">Bekleyen teklif talebi yok 👍</div>') +
+  let h = '<div class="blk"><h2>1 · Teklif ver <span class="cnt">' + open.length + '</span></h2><div class="hint">Fiyatı kutuya yaz → "Teklifi kopyala" → Gmail\'de yanıta yapıştır.</div>' + (open.map(q => card(q, 'quote')).join('') || '<div class="empty">Bekleyen teklif talebi yok 👍</div>') +
     (newMail.length ? newMail.map(o => '<div class="row2"><div><b>' + esc(cleanCo(o.firma)) + '</b> – ' + esc(o.konu) + '</div><a class="sm" target="_blank" rel="noopener" href="' + gmail(o.thread) + '">Cevapla ✉️</a></div>').join('') : '') + '</div>';
   h += '<div class="blk"><h2>2 · Aracım var, yük var <span class="cnt">' + deals.length + '</span></h2>' +
-    (deals.length ? deals.slice(0, 8).map(m => { const f = IDX.fleet[m.arac], it = IDX.load[m.item]; if (!f || !it) return '';
+    (deals.length ? deals.slice(0, 10).map(m => { const f = IDX.fleet[m.arac], it = IDX.load[m.item]; if (!f || !it) return '';
       const where = f.durum === 'driving' ? cityOf(f.yakin) + ' yakınında yolda' : cityOf(f.yakin) + '\'de duruyor';
       return '<div class="deal" data-sel="load:' + esc(it.id) + '"><div class="dTruck">🚚 ' + esc(f.plaka) + ' <span class="muted">' + esc(where) + '</span></div>' +
-        '<div class="dLoad">→ <b>' + esc(cleanCo(it.firma_k)) + '</b> ' + esc(routeTxt(it)) + '</div>' +
-        '<div class="dMeta">' + esc(winTxt(it.win, it.yukleme_tarihi)) + ' · ' + m.km + ' km · <b class="money">' + money(it.fiyat, it.para) + '</b>' + (it.link ? ' · <a target="_blank" rel="noopener" href="' + esc(it.link) + '">Gmail\'de aç</a>' : '') + '</div>' +
+        '<div class="dLoad">→ <b>' + esc(cleanCo(it.firma_k)) + '</b> · ' + esc(routeTxt(it)) + '</div>' +
+        '<div class="dKm"><span><b>' + kmTxt(m.bos_km ?? m.km, m.bos_km == null || m.bos_yaklasik) + '</b> boş</span><span><b>' + kmTxt(it.km, it.km_yaklasik) + '</b> yol</span><span>' + esc(winTxt(it.win, it.yukleme_tarihi, it.tarih_belirsiz) || 'tarih yazmıyor') + '</span><span>' + esc(it.vgrup || it.arac || '') + (it.adr ? ' · ADR' : '') + '</span></div>' +
         (m.flags && m.flags.length ? '<div class="muted small">' + esc(plainFlags(m.flags)) + '</div>' : '') + '</div>'; }).join('')
       : '<div class="empty">Şu an araçlarımıza yakın yük yok.</div>') + '</div>';
-  h += '<div class="blk"><h2>3 · Bekleyen <span class="cnt">' + wait.length + '</span></h2>' + (wait.map(w => '<div class="row2"><div><b>' + esc(w.ad) + '</b> – ' + esc(w.r) + (w.s ? '<div class="muted small">Verdiğimiz fiyat: ' + esc(w.s) + '</div>' : '') + '</div><div class="right"><span class="tag' + ((w.g || 0) >= 5 ? ' red' : '') + '">' + (w.g == null ? '' : w.g + ' gündür cevap yok') + '</span>' + (w.link ? '<a class="sm" target="_blank" rel="noopener" href="' + esc(w.link) + '">Gmail</a>' : '') + '</div></div>').join('') || '<div class="empty">Bekleyen yok.</div>') + '</div>';
+  h += '<div class="blk"><h2>3 · Bekleyen <span class="cnt">' + wait.length + '</span></h2>' + (wait.map(w => '<div class="row2"><div><b>' + esc(w.ad) + '</b> – ' + esc(w.r) + (w.km ? ' <span class="muted">(' + kmTxt(w.km, w.ap) + ')</span>' : '') + (w.s ? '<div class="muted small">Verdiğin fiyat: ' + esc(w.s) + '</div>' : '') + '</div><div class="right"><span class="tag' + ((w.g || 0) >= 5 ? ' red' : '') + '">' + (w.g == null ? '' : w.g + ' gündür cevap yok') + '</span>' + (w.link ? '<a class="sm" target="_blank" rel="noopener" href="' + esc(w.link) + '">Gmail</a>' : '') + '</div></div>').join('') || '<div class="empty">Bekleyen yok.</div>') + '</div>';
   const stale = D.fleet.filter(f => f.eski || f.durum === 'nodata').map(f => f.plaka);
-  h += '<div class="note">' + (stale.length ? 'Konumu gelmeyen araçlar: ' + esc(stale.join(', ')) + '. ' : '') + '{{MT}} bilgisi ' + esc(iso2tr(D.mt_tarih)) + ' tarihli (canlı bağlantı kapalı). Fiyatlar öneridir.</div>';
+  h += '<div class="note">Mesafeler karayolu km (OSRM). "~" olanlar yaklaşık. ' + (stale.length ? 'Konumu gelmeyen araçlar: ' + esc(stale.join(', ')) + '. ' : '') + '{{MT}} bilgisi ' + esc(iso2tr(D.mt_tarih)) + ' tarihli.</div>';
   return h;
 }
 
@@ -221,15 +255,18 @@ function renderDetail() {
   let h = '<div class="subs">' + SUBS.map(s => '<button data-s="' + s[0] + '" class="' + (sub === s[0] ? 'on' : '') + '">' + s[1] + '</button>').join('') + '</div>' +
     '<input id="dq" class="search" type="search" placeholder="Ara: firma, şehir, plaka…" value="' + esc(q) + '">';
   const gm = (l) => l ? '<a target="_blank" rel="noopener" href="' + esc(l) + '">Gmail</a>' : '';
+  const ownK = (it) => { const t = ownTruckFor(it); return t ? esc(t.plaka) + ' · ' + kmTxt(t.km, t.yaklasik) : '–'; };
   if (sub === 'yuk') {
     const rows = D.loads.filter(l => hit(l, ['firma', 'cikis_adres', 'varis_adres', 'arac', 'yukleme_tarihi', 'urun']));
-    h += '<div class="muted small pad">' + rows.length + ' yük ilanı (son 14 gün). Satıra dokun → haritada uygun araçlar.</div>' + table('yuk', [
+    h += '<div class="muted small pad">' + rows.length + ' yük ilanı (son 14 gün). Satıra dokun → rota, km ve teklif metni.</div>' + table('yuk', [
       {h: 'Firma', k: 'firma_k', r: r => esc(cleanCo(r.firma_k))},
       {h: 'Nereden → Nereye', k: 'r', r: r => esc(routeTxt(r)), sv: r => routeTxt(r)},
-      {h: 'Yükleme', k: 'w', r: r => esc(winTxt(r.win, r.yukleme_tarihi) || '—'), sv: r => r.win ? r.win[0] : ''},
+      {h: 'Yol', k: 'km', r: r => '<b>' + kmTxt(r.km, r.km_yaklasik) + '</b>', sv: r => r.km || 0},
+      {h: 'Yükleme', k: 'w', r: r => esc(winTxt(r.win, r.yukleme_tarihi, r.tarih_belirsiz) || '—'), sv: r => r.win ? r.win[0] : ''},
       {h: 'Araç', k: 'vgrup', r: r => esc(r.vgrup) + (r.adr ? ' · ADR' : '')},
-      {h: 'Fiyat', k: 'fiyat', r: r => '<b class="money">' + money(r.fiyat, r.para) + '</b>', sv: r => r.fiyat || 0},
-      {h: 'Uygun araç', k: 'm', r: r => { const n = (IDX.mByItem[r.id] || []).length; return n ? n + ' araç' : '–'; }, sv: r => (IDX.mByItem[r.id] || []).length},
+      {h: 'Yük', k: 'agirlik', r: r => esc([r.agirlik, r.adet].filter(Boolean).join(' · ') || '—')},
+      {h: 'Aracımız (boş km)', k: 'ya', r: r => ownK(r), sv: r => (ownTruckFor(r) || {km: 1e9}).km},
+      {h: 'Geldi', k: 'bekleme', r: r => esc(daysTxt(r.bekleme))},
       {h: '', k: 'link', r: r => gm(r.link)},
     ], rows, r => 'class="click" data-sel="load:' + esc(r.id) + '"');
   } else if (sub === 'arac') {
@@ -246,9 +283,9 @@ function renderDetail() {
     h += '<div class="muted small pad">Yüke 250 km ve 2 gün içinde uyan araçlar.</div>' + table('esl', [
       {h: 'Müşteri', k: 'i', r: r => esc(cleanCo((itemOf(r.item) || {}).firma_k))},
       {h: 'Nereden → Nereye', k: 'r', r: r => esc(routeTxt(itemOf(r.item)))},
+      {h: 'Yol', k: 'yk', r: r => kmTxt((itemOf(r.item) || {}).km, (itemOf(r.item) || {}).km_yaklasik), sv: r => (itemOf(r.item) || {}).km || 0},
       {h: 'En yakın araç', k: 'arac', r: r => IDX.fleet[r.arac] ? '🚚 ' + esc(r.arac) + ' (bizim)' : esc(cleanCo((truckOf(r.arac) || {}).firma_k))},
-      {h: 'Uzaklık', k: 'km', r: r => r.km + ' km'},
-      {h: 'Fiyat', k: 'f', r: r => '<b class="money">' + money((itemOf(r.item) || {}).fiyat, (itemOf(r.item) || {}).para) + '</b>', sv: r => (itemOf(r.item) || {}).fiyat || 0},
+      {h: 'Boş km', k: 'km', r: r => kmTxt(r.bos_km ?? r.km, r.bos_km == null || r.bos_yaklasik), sv: r => r.bos_km ?? r.km},
       {h: 'Not', k: 'flags', r: r => esc(plainFlags(r.flags))},
     ], rows, r => 'class="click" data-sel="' + (r.tur === 'teklif' ? 'quote' : 'load') + ':' + esc(r.item) + '"');
   } else if (sub === 'teklif') {
@@ -256,8 +293,9 @@ function renderDetail() {
     h += table('tek', [
       {h: 'Müşteri', k: 'firma_k', r: r => esc(cleanCo(r.firma_k))},
       {h: 'Nereden → Nereye', k: 'r', r: r => esc(routeTxt(r))},
+      {h: 'Yol', k: 'km', r: r => '<b>' + kmTxt(r.km, r.km_yaklasik) + '</b>', sv: r => r.km || 0},
       {h: 'Durum', k: 'durum', r: r => isOpenQ(r) ? 'Teklif verilecek' : 'Cevap bekleniyor'},
-      {h: 'Fiyat', k: 'fiyat', r: r => '<b class="money">' + (r.sent ? esc(r.sent) : money(r.fiyat, r.para)) + '</b>', sv: r => r.fiyat || 0},
+      {h: 'Verdiğin fiyat', k: 'sent', r: r => esc(r.sent || '—')},
       {h: 'Geldi', k: 'bekleme', r: r => esc(daysTxt(r.bekleme))},
       {h: '', k: 'link', r: r => gm(r.link)},
     ], rows, r => 'class="click" data-sel="quote:' + esc(r.id) + '"');
@@ -278,11 +316,17 @@ function renderDetail() {
   return h;
 }
 
-/* ---------- çizim ---------- */
+/* ---------- ortak bağlamalar ---------- */
+function refreshPreviews(id) { const it = itemOf(id); if (!it) return; document.querySelectorAll('#qt-' + CSS.escape(id) + ', #qt-s-' + CSS.escape(id)).forEach(p => p.innerHTML = previewHtml(it));
+  document.querySelectorAll('.pin[data-pid="' + CSS.escape(id) + '"]').forEach(i => { if (i !== document.activeElement) i.value = (PRICES[id] || {}).v || ''; });
+  document.querySelectorAll('.pcur[data-pid="' + CSS.escape(id) + '"]').forEach(i => i.value = (PRICES[id] || {}).c || 'EUR'); }
 function bindCommon(el) {
-  el.querySelectorAll('[data-copy]').forEach(b => b.onclick = (e) => { e.stopPropagation(); const it = itemOf(b.dataset.copy); if (it && it.teklif_metni) copyText(it.teklif_metni); else toast('Bu talep için hazır metin yok'); });
-  el.querySelectorAll('[data-sel]').forEach(a => a.onclick = (e) => { if (e.target.closest('a[target], button[data-copy]')) return; e.preventDefault(); const [k, id] = a.dataset.sel.split(':'); select(k, id); });
-  el.querySelectorAll('[data-show]').forEach(a => a.onclick = (e) => { e.preventDefault(); const p = $('qt-' + a.dataset.show); p.classList.toggle('hidden'); a.textContent = p.classList.contains('hidden') ? 'Metni gör' : 'Metni gizle'; });
+  el.querySelectorAll('[data-copy]').forEach(b => b.onclick = (e) => { e.stopPropagation(); e.preventDefault(); const it = itemOf(b.dataset.copy); if (!it || !it.teklif_metni) return toast('Bu iş için teklif metni yok');
+    copyText(quoteText(it)).then(() => { if (!priceStr(it.id, it.dil)) toast('✓ Kopyalandı – fiyat boş, [FİYAT] yerine yazmayı unutma'); }); });
+  el.querySelectorAll('.pin').forEach(i => { i.onclick = (e) => e.stopPropagation(); i.oninput = () => { const id = i.dataset.pid; PRICES[id] = Object.assign({c: 'EUR'}, PRICES[id], {v: i.value}); refreshPreviews(id); }; });
+  el.querySelectorAll('.pcur').forEach(i => { i.onclick = (e) => e.stopPropagation(); i.onchange = () => { const id = i.dataset.pid; PRICES[id] = Object.assign({v: ''}, PRICES[id], {c: i.value}); refreshPreviews(id); }; });
+  el.querySelectorAll('[data-sel]').forEach(a => a.onclick = (e) => { if (e.target.closest('a[target], button[data-copy], input, select')) return; e.preventDefault(); const [k, id] = a.dataset.sel.split(':'); select(k, id); });
+  el.querySelectorAll('[data-show]').forEach(a => a.onclick = (e) => { e.preventDefault(); const p = a.closest('.card, .pop').querySelector('pre.qt'); if (!p) return; p.classList.toggle('hidden'); a.textContent = p.classList.contains('hidden') ? 'Teklif metnini gör' : 'Metni gizle'; });
 }
 function render() {
   if (!D) return;
@@ -307,9 +351,10 @@ function renderUpd() {
 let sig = '';
 function apply(data) {
   D = data; lastFetch = new Date(); index();
+  const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('pin');
   const s = [D.guncelleme, D.fleet_zaman, D.loads.length, D.quotes.length, D.data_mtime, D.yayin_zamani].join('|');
-  if (s !== sig) { sig = s; drawMap(); if (sel) { renderSel(); } }
-  render(); renderUpd();
+  if (s !== sig) { sig = s; drawMap(); if (sel && !typing) { renderSel(); highlight(sel.kind, sel.id); } }
+  if (!typing) render(); renderUpd();
 }
 async function fetchData(manual) {
   if (OFFLINE) return;
@@ -322,6 +367,7 @@ async function fetchData(manual) {
 $('btnReload').onclick = () => OFFLINE ? toast('Çevrimdışı kopya') : fetchData(true);
 if (SRC && $('btnLogout')) $('btnLogout').onclick = (e) => { e.preventDefault(); if (window.APP_LOGOUT) window.APP_LOGOUT(); };
 window.addEventListener('resize', () => map.invalidateSize());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('mapBox').classList.contains('fs')) $('btnFs').click(); });
 if (OFFLINE) apply(window.EMBEDDED_DATA); else { fetchData(); setInterval(fetchData, POLL_MS); }
 setInterval(() => D && renderUpd(), 30000);
 setTimeout(() => map.invalidateSize(), 300);
