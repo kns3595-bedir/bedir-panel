@@ -1,86 +1,78 @@
-/* Operasyon paneli – istemci */
+/* Operasyon paneli – istemci v2 (sade, mobil öncelikli). Arayüzü kendisi çizer: index.html sadece yükleyici. */
 (function () {
 'use strict';
 const OFFLINE = !!window.EMBEDDED_DATA;
-const SRC = window.APP_SOURCE || null; /* yayın modu: şifreli veri kaynağı */
+const SRC = window.APP_SOURCE || null;
 const POLL_MS = 60000;
-const CC = {TR:'Türkiye',DE:'Almanya',FR:'Fransa',IT:'İtalya',NL:'Hollanda',BE:'Belçika',AT:'Avusturya',CZ:'Çekya',PL:'Polonya',ES:'İspanya',PT:'Portekiz',SK:'Slovakya',HU:'Macaristan',RO:'Romanya',CH:'İsviçre',DK:'Danimarka',LU:'Lüksemburg',GB:'İngiltere',SE:'İsveç',FI:'Finlandiya',LT:'Litvanya',SI:'Slovenya',HR:'Hırvatistan',BG:'Bulgaristan',GR:'Yunanistan',GE:'Gürcistan',AM:'Ermenistan',AZ:'Azerbaycan',IR:'İran',IQ:'Irak',AE:'BAE',QA:'Katar',SA:'S. Arabistan',KW:'Kuveyt',OM:'Umman',IE:'İrlanda',MA:'Fas',RU:'Rusya',AF:'Afganistan',TM:'Türkmenistan',RS:'Sırbistan',BH:'Bahreyn'};
-const ST_BADGE = {'Yeni':'b-blue','Eşleşti':'b-green','Teklif hazır':'b-amber','Gönderildi':'b-purple','Takipte':'b-gray'};
-const FL_ST = {driving:'Yolda',standing:'Duruyor',nodata:'Veri yok'};
-let D = null, tab = 'teklif', sel = null, sortState = {}, lastFetch = null, firstFit = true;
+const CC = {TR:'Türkiye',DE:'Almanya',FR:'Fransa',IT:'İtalya',NL:'Hollanda',BE:'Belçika',AT:'Avusturya',CZ:'Çekya',PL:'Polonya',ES:'İspanya',PT:'Portekiz',SK:'Slovakya',HU:'Macaristan',RO:'Romanya',CH:'İsviçre',DK:'Danimarka',LU:'Lüksemburg',GB:'İngiltere',UK:'İngiltere',SE:'İsveç',FI:'Finlandiya',LT:'Litvanya',SI:'Slovenya',HR:'Hırvatistan',BG:'Bulgaristan',GR:'Yunanistan',GE:'Gürcistan',AM:'Ermenistan',AZ:'Azerbaycan',IR:'İran',IQ:'Irak',AE:'BAE',QA:'Katar',SA:'S. Arabistan',KW:'Kuveyt',OM:'Umman',IE:'İrlanda',MA:'Fas',RU:'Rusya',AF:'Afganistan',TM:'Türkmenistan',RS:'Sırbistan',BH:'Bahreyn'};
+const COUNTRY_WORDS = /^(uk|u\.k\.|uae|türkiye|turkey|qatar|romania|italy|germany|scotland|england|bae|katar|almanya|italya|ingiltere|i̇ngiltere|fransa|hollanda|belçika|romanya|polonya|avusturya|isviçre|i̇sviçre|macaristan|ispanya|i̇spanya|çekya)$/i;
+let D = null, view = 'bugun', sub = 'yuk', sel = null, showAll = false, sortState = {}, lastFetch = null, firstFit = true;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ncc = (c) => (c === 'UK' ? 'GB' : (c || ''));
-const money = (p, c) => p ? Number(p).toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' ' + (c || '') : '—';
+const money = (p, c) => { if (!p) return '—'; const s = Number(p).toLocaleString('tr-TR', {maximumFractionDigits: 0}); return c === 'EUR' ? s + ' €' : c === 'USD' ? s + ' $' : s + ' ' + (c || ''); };
 const gmail = (t) => t ? 'https://mail.google.com/mail/u/0/#all/' + t : '';
 const iso2tr = (s) => s ? s.slice(8, 10) + '.' + s.slice(5, 7) + '.' + s.slice(0, 4) : '';
 function hav(a, b) { const R = 6371, r = Math.PI / 180; const dLa = (b[0]-a[0])*r, dLo = (b[1]-a[1])*r; const h = Math.sin(dLa/2)**2 + Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dLo/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
 function parseTR(s) { const m = /(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2}))?/.exec(s || ''); return m ? new Date(+m[3], +m[2]-1, +m[1], +(m[4]||0), +(m[5]||0)) : null; }
-function ago(d) { if (!d) return ''; const m = Math.round((Date.now() - d.getTime()) / 60000); if (m < 1) return 'az önce'; if (m < 60) return m + ' dk önce'; const h = Math.round(m/60); if (h < 48) return h + ' sa önce'; return Math.round(h/24) + ' gün önce'; }
-function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove('on'), 1800); }
+function ago(d) { if (!d) return ''; const m = Math.round((Date.now() - d.getTime()) / 60000); if (m < 1) return 'az önce'; if (m < 60) return m + ' dk önce'; const h = Math.round(m/60); if (h < 48) return h + ' saat önce'; return Math.round(h/24) + ' gün önce'; }
+function daysTxt(n) { return n == null ? '' : n === 0 ? 'bugün geldi' : n === 1 ? 'dün geldi' : n + ' gün önce geldi'; }
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove('on'), 2000); }
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); }
   catch (e) { const ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-  toast('Teklif metni kopyalandı');
+  toast('✓ Teklif kopyalandı – Gmail\'de yanıta yapıştır');
 }
+/* "Iron Mountain, Milton Keynes MK6 4AD, UK" → "Milton Keynes" */
+function place(addr, cc) {
+  let a = String(addr || '').replace(/\([^)]*\)/g, ' ').split('/')[0];
+  const segs = a.split(',').map(s => s.trim()).filter(s => s && !COUNTRY_WORDS.test(s));
+  let s = (segs.length ? segs[segs.length - 1] : '').split(/\s+/).filter(w => !/\d/.test(w) && !/^(OSB|EXW)$/i.test(w)).join(' ').replace(/[-–]+$/, '').trim();
+  if (segs.length > 1 && /^(OSB)$/i.test(s)) s = segs[segs.length - 2];
+  const c = ncc(cc);
+  if (!s || s.length < 3) return CC[c] || c || '?';
+  return (c && c !== 'TR' && CC[c] && !s.includes(CC[c])) ? s + ' (' + CC[c] + ')' : s;
+}
+function routeTxt(it) { return place(it.cikis_adres, it.cikis) + ' → ' + place(it.varis_adres, it.varis); }
+function cleanCo(s) { return String(s || '').replace(/\s*\([^)]*\)\s*$/, '').trim(); }
+function winTxt(w, raw) {
+  if (!w) return raw || '';
+  const f = (s) => s.slice(8, 10) + '.' + s.slice(5, 7);
+  if (/hazır|müsait/i.test(raw || '')) return 'hazır';
+  return w[0] === w[1] ? f(w[0]) : f(w[0]).slice(0, 2) + '–' + f(w[1]);
+}
+const PLAIN_FLAG = {'teyit gerekir': 'ilan eski, hâlâ geçerli mi sor', 'tarih belirtilmemiş': 'yükleme tarihi yazmıyor', 'araç yolda – boşalma teyit': 'aracımız şu an yolda, boşalınca'};
+const plainFlags = (fs) => (fs || []).map(f => PLAIN_FLAG[f] || f).join(' · ');
+const FL_ST = {driving: 'yolda', standing: 'duruyor', nodata: 'sinyal yok'};
+const cityOf = (yakin) => String(yakin || '').replace(/\s*\(.*$/, '');
+
+/* ---------- iskelet ---------- */
+const root = $('appRoot') || document.body.appendChild(Object.assign(document.createElement('div'), {id: 'appRoot'}));
+root.style.display = 'block';
+root.innerHTML =
+  '<header class="hdr"><div class="hl"><div class="logo">B</div><div><div class="ttl">{{TITLE}}</div><div id="upd" class="upd">Yükleniyor…</div></div></div>' +
+  '<div class="hr"><button id="btnReload" class="hbtn" title="Yenile">↻</button>' + (OFFLINE ? '' : '<a id="btnLogout" class="hbtn" href="' + (SRC ? '#' : '/logout') + '">Çıkış</a>') + '</div></header>' +
+  '<nav class="nav"><button data-v="bugun" class="on">Bugün</button><button data-v="detay">Detay</button></nav>' +
+  '<div class="wrap"><section class="colMap"><div class="mapBox"><div id="map"></div><button id="btnAll" class="allBtn">Tüm yükleri göster</button></div><div id="sel"></div></section>' +
+  '<section id="main" class="colMain"></section></div><div id="toast" class="toast"></div>';
+document.querySelectorAll('.nav button').forEach(b => b.onclick = () => { view = b.dataset.v; document.querySelectorAll('.nav button').forEach(x => x.classList.toggle('on', x === b)); render(); window.scrollTo({top: 0}); });
 
 /* ---------- harita ---------- */
-const map = L.map('map', {zoomControl: true, worldCopyJump: true, preferCanvas: false}).setView([42, 25], 4);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18, attribution: '&copy; OpenStreetMap katkıcıları'}).addTo(map);
+const map = L.map('map', {zoomControl: true, worldCopyJump: true, attributionControl: true}).setView([40, 33], 5);
+const TILE_OSM = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin', attribution: '&copy; OpenStreetMap'});
+const TILE_ESRI = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {maxZoom: 19, attribution: 'Harita &copy; Esri, OpenStreetMap'});
+let tileErr = 0; TILE_OSM.on('tileerror', () => { if (++tileErr === 3 && map.hasLayer(TILE_OSM)) { map.removeLayer(TILE_OSM); TILE_ESRI.addTo(map); } });
+TILE_OSM.addTo(map);
 const clusterIcon = (cls) => (c) => { const n = c.getChildCount(); const s = n < 10 ? 30 : n < 50 ? 36 : 44; return L.divIcon({html: '<div class="cl ' + cls + '" style="width:' + s + 'px;height:' + s + 'px">' + n + '</div>', className: '', iconSize: [s, s]}); };
 const LY = {
   loads: L.markerClusterGroup({iconCreateFunction: clusterIcon('cl-load'), maxClusterRadius: 45, showCoverageOnHover: false}),
   trucks: L.markerClusterGroup({iconCreateFunction: clusterIcon('cl-truck'), maxClusterRadius: 40, showCoverageOnHover: false}),
-  fleet: L.layerGroup(), hq: L.layerGroup(), mt: L.layerGroup(), quotes: L.layerGroup(),
+  quotes: L.layerGroup(), mt: L.layerGroup(), fleet: L.layerGroup().addTo(map), hq: L.layerGroup().addTo(map),
 };
 const hlLayer = L.layerGroup().addTo(map);
-Object.values(LY).forEach(l => l.addTo(map));
-L.control.layers(null, {
-  '<span style="color:#2563eb">●</span> Yükler': LY.loads, '<span style="color:#16a34a">●</span> Boş araçlar': LY.trucks,
-  '<span style="color:#0369a1">■</span> Öz filo ({{FL}})': LY.fleet, '<span style="color:#dc2626">■</span> Merkez ({{HQC}})': LY.hq,
-  '<span style="color:#7c3aed">●</span> {{MT}} açık': LY.mt, '<span style="color:#ea580c">●</span> Teklif talepleri': LY.quotes,
-}, {collapsed: window.innerWidth < 900, position: 'topright'}).addTo(map);
-$('legend').innerHTML = '<div><i style="background:#2563eb"></i>Yük</div><div><i style="background:#16a34a"></i>Boş araç</div><div><i style="background:#0369a1;border-radius:3px"></i>Öz filo</div><div><i style="background:#ea580c"></i>Teklif talebi</div><div><i style="background:#7c3aed"></i>{{MT}}</div><div><i style="background:#dc2626;border-radius:3px"></i>Merkez</div>';
 const icon = (cls, txt, s) => L.divIcon({html: '<div class="mk ' + cls + '" style="width:' + s + 'px;height:' + s + 'px">' + (txt || '') + '</div>', className: '', iconSize: [s, s], iconAnchor: [s/2, s/2]});
-
-/* ---------- filtreler ---------- */
-const F = () => ({q: $('fSearch').value.trim().toLocaleLowerCase('tr'), c: $('fCountry').value, v: $('fVeh').value, a: $('fAdr').value, s: $('fSrc').value, from: $('fFrom').value, to: $('fTo').value});
-function hay(o, keys) { return keys.map(k => o[k] == null ? '' : String(o[k])).join(' ').toLocaleLowerCase('tr'); }
-function winOk(w, f) { if (!w) return true; if (f.from && w[1] < f.from) return false; if (f.to && w[0] > f.to) return false; return true; }
-function loadOk(L_, f) {
-  if (f.q && !hay(L_, ['id','firma','email','cikis_adres','varis_adres','cikis','varis','urun','arac','not_','yukleme_tarihi']).includes(f.q)) return false;
-  if (f.c && ncc(L_.cikis) !== f.c && ncc(L_.varis) !== f.c) return false;
-  if (f.v && L_.vgrup !== f.v) return false;
-  if (f.a && (L_.adr ? '1' : '0') !== f.a) return false;
-  if (f.s && L_.kaynak !== f.s) return false;
-  return winOk(L_.win, f);
-}
-function truckOk(T, f) {
-  if (f.q && !hay(T, ['id','firma','email','bolge','ulke','arac','tarih','not_','gidebilecegi']).includes(f.q)) return false;
-  if (f.c && ncc(T.cc) !== f.c) return false;
-  if (f.v && T.vgrup !== f.v) return false;
-  if (f.a && (T.adr ? '1' : '0') !== f.a) return false;
-  if (f.s && T.kaynak !== f.s) return false;
-  return winOk(T.win, f);
-}
-function quoteOk(q, f) {
-  if (f.q && !hay(q, ['id','firma','email','cikis_adres','varis_adres','yuk','arac','istek']).includes(f.q)) return false;
-  if (f.c && ncc(q.cikis) !== f.c && ncc(q.varis) !== f.c) return false;
-  if (f.a && (q.adr ? '1' : '0') !== f.a) return false;
-  return true;
-}
-function fillSelect(id, vals, label) {
-  const el = $(id), cur = el.value;
-  el.innerHTML = '<option value="">' + label + '</option>' + vals.map(v => '<option value="' + esc(v[0]) + '">' + esc(v[1]) + '</option>').join('');
-  el.value = cur;
-}
-function setupFilters() {
-  const cs = new Set(); D.loads.forEach(l => { cs.add(ncc(l.cikis)); cs.add(ncc(l.varis)); }); D.trucks.forEach(t => cs.add(ncc(t.cc)));
-  fillSelect('fCountry', [...cs].filter(Boolean).sort((a, b) => (CC[a] || a).localeCompare(CC[b] || b, 'tr')).map(c => [c, (CC[c] || c) + ' (' + c + ')']), 'Tüm ülkeler');
-  const vs = new Set(); D.loads.forEach(l => vs.add(l.vgrup)); D.trucks.forEach(t => vs.add(t.vgrup));
-  fillSelect('fVeh', [...vs].filter(Boolean).sort().map(v => [v, v]), 'Tüm araç tipleri');
-  fillSelect('fSrc', [['Gmail', 'Gmail (yeni ilan)'], ['İlan CSV', 'İlan sistemi (CSV)'], ['{{GP}}', '{{GP}}']], 'Tüm kaynaklar');
-}
+function setAll(on) { showAll = on; ['loads', 'trucks', 'quotes', 'mt'].forEach(k => on ? LY[k].addTo(map) : map.removeLayer(LY[k])); $('btnAll').textContent = on ? 'Sadece araçlarım' : 'Tüm yükleri göster'; $('btnAll').classList.toggle('on', on); }
+$('btnAll').onclick = () => setAll(!showAll);
 
 /* ---------- indeksler ---------- */
 let IDX = {};
@@ -93,298 +85,244 @@ function index() {
 }
 const itemOf = (id) => IDX.load[id] || IDX.quote[id];
 const truckOf = (id) => IDX.truck[id] || IDX.fleet[id];
-const truckLabel = (id) => { const f = IDX.fleet[id]; if (f) return '🚚 ' + id + ' (öz filo)'; const t = IDX.truck[id]; return t ? id + ' · ' + t.firma_k : id; };
+const isOpenQ = (q) => ['Teklif hazır', 'Yeni', 'Eşleşti'].includes(q.durum);
 
-/* ---------- harita çizimi ---------- */
-const MK = {load: {}, truck: {}, fleet: {}, quote: {}};
-function popLoad(l) { return '<div class="pop"><b>' + esc(l.id) + ' · ' + esc(l.firma_k) + '</b><div>' + esc(l.cikis_adres) + ' → ' + esc(l.varis_adres) + '</div><div class="small muted">Yükleme: ' + esc(l.yukleme_tarihi || '—') + ' · ' + esc(l.vgrup) + (l.adr ? ' · ADR' : '') + '</div><div class="small">Öneri: <b>' + money(l.fiyat, l.para) + '</b></div><div class="small"><a href="#" data-sel="load:' + esc(l.id) + '">Eşleşmeleri göster</a>' + (l.link ? ' · <a target="_blank" rel="noopener" href="' + esc(l.link) + '">Gmail</a>' : '') + '</div></div>'; }
-function popTruck(t) { return '<div class="pop"><b>' + esc(t.id) + ' · ' + esc(t.firma_k) + '</b><div>' + esc(t.bolge) + ' (' + esc(t.ulke) + ')</div><div class="small muted">' + esc(t.arac) + ' · ' + esc(t.tarih) + ' · ' + esc(t.kaynak) + '</div><div class="small"><a href="#" data-sel="truck:' + esc(t.id) + '">Uygun yükler</a>' + (t.link1 ? ' · <a target="_blank" rel="noopener" href="' + esc(t.link1) + '">Gmail</a>' : '') + '</div></div>'; }
-function popFleet(f) { return '<div class="pop"><b>🚚 ' + esc(f.plaka) + '</b><div>' + esc(FL_ST[f.durum] || f.durum) + (f.hiz ? ' · ' + f.hiz + ' km/s' : '') + '</div><div class="small muted">' + esc(f.yakin) + ' · son sinyal ' + esc(f.son || '—') + '</div><div class="small"><a href="#" data-sel="fleet:' + esc(f.plaka) + '">Uygun yükler</a></div></div>'; }
-function popQuote(q) { return '<div class="pop"><b>' + esc(q.id) + ' · ' + esc(q.firma_k) + '</b>' + (q.acil ? ' <span class="badge b-red">ACİL</span>' : '') + '<div>' + esc(q.cikis_adres) + ' → ' + esc(q.varis_adres) + '</div><div class="small">' + esc(q.durum) + ' · ' + money(q.fiyat, q.para) + '</div><div class="small"><a href="#" data-sel="quote:' + esc(q.id) + '">Detay</a></div></div>'; }
 function drawMap() {
-  const f = F();
-  LY.loads.clearLayers(); LY.trucks.clearLayers(); LY.fleet.clearLayers(); LY.hq.clearLayers(); LY.mt.clearLayers(); LY.quotes.clearLayers();
-  MK.load = {}; MK.truck = {}; MK.fleet = {}; MK.quote = {};
-  const lm = [];
-  D.loads.filter(l => l.o && loadOk(l, f)).forEach(l => { const m = L.marker([l.o[0], l.o[1]], {icon: icon('mk-load', '', 14), title: l.id}).bindPopup(popLoad(l)); m.on('click', () => select('load', l.id, false)); MK.load[l.id] = m; lm.push(m); });
-  LY.loads.addLayers(lm);
-  const tm = [];
-  D.trucks.filter(t => t.p && truckOk(t, f)).forEach(t => { const m = L.marker([t.p[0], t.p[1]], {icon: icon('mk-truck', '', 16), title: t.id}).bindPopup(popTruck(t)); m.on('click', () => select('truck', t.id, false)); MK.truck[t.id] = m; tm.push(m); });
-  LY.trucks.addLayers(tm);
+  Object.values(LY).forEach(l => l.clearLayers());
+  const pl = (l) => '<b>' + esc(cleanCo(l.firma_k)) + '</b><br>' + esc(routeTxt(l)) + '<br>' + esc(winTxt(l.win, l.yukleme_tarihi)) + ' · ' + money(l.fiyat, l.para) + '<br><a href="#" data-sel="load:' + esc(l.id) + '">Uygun araçlar</a>';
+  LY.loads.addLayers(D.loads.filter(l => l.o).map(l => L.marker([l.o[0], l.o[1]], {icon: icon('mk-load', '', 14)}).bindPopup(pl(l))));
+  LY.trucks.addLayers(D.trucks.filter(t => t.p).map(t => L.marker([t.p[0], t.p[1]], {icon: icon('mk-truck', '', 14)}).bindPopup('<b>' + esc(cleanCo(t.firma_k)) + '</b><br>Boş araç: ' + esc(t.bolge) + '<br>' + esc(t.arac) + ' · ' + esc(t.tarih))));
+  D.quotes.filter(q => q.o && isOpenQ(q)).forEach(q => L.marker([q.o[0], q.o[1]], {icon: icon('mk-quote', '€', 22)}).bindPopup('<b>' + esc(cleanCo(q.firma_k)) + '</b><br>' + esc(routeTxt(q)) + '<br>' + money(q.fiyat, q.para) + '<br><a href="#" data-sel="quote:' + esc(q.id) + '">Göster</a>').addTo(LY.quotes));
+  D.mt.filter(m => m.acik && m.o && m.d).forEach(m => L.polyline([[m.o[0], m.o[1]], [m.d[0], m.d[1]]], {color: '#64748b', weight: 2, opacity: .5, dashArray: '6 6'}).bindTooltip('{{MT}}: ' + m.cikis + ' → ' + m.varis + (m.cekici ? ' · ' + m.cekici : '')).addTo(LY.mt));
   D.fleet.filter(x => x.p).forEach(x => {
-    const cls = 'mk-fleet' + (x.durum === 'driving' ? ' drv' : '') + (x.eski || x.durum === 'nodata' ? ' old' : '');
-    const m = L.marker([x.p[0], x.p[1]], {icon: icon(cls, '🚚', 24), zIndexOffset: 500}).bindTooltip(x.plaka + ' · ' + (FL_ST[x.durum] || x.durum) + (x.hiz ? ' ' + x.hiz + ' km/s' : ''), {direction: 'top', className: 'plate', offset: [0, -10]}).bindPopup(popFleet(x));
-    m.on('click', () => select('fleet', x.plaka, false)); MK.fleet[x.plaka] = m; LY.fleet.addLayer(m);
+    const cls = 'mk-fleet' + (x.eski || x.durum === 'nodata' ? ' old' : '');
+    L.marker([x.p[0], x.p[1]], {icon: L.divIcon({html: '<div class="plt ' + cls + '">' + esc(x.plaka) + '</div>', className: '', iconSize: null, iconAnchor: [34, 12]}), zIndexOffset: 500})
+      .bindPopup('<b>' + esc(x.plaka) + '</b><br>' + esc(cityOf(x.yakin)) + ' – ' + esc(FL_ST[x.durum] || x.durum) + (x.hiz ? ' (' + x.hiz + ' km/s)' : '') + '<br>Son sinyal: ' + esc(x.son || '—') + '<br><a href="#" data-sel="fleet:' + esc(x.plaka) + '">Bu araca uygun yükler</a>').addTo(LY.fleet);
   });
-  const hq = D.hq || {p: [38.73, 35.48], ad: 'Merkez', adres: '{{HQC}}'};
-  L.marker(hq.p, {icon: icon('mk-hq', '★', 30), zIndexOffset: 1000}).bindTooltip(hq.ad, {direction: 'top', offset: [0, -14]}).bindPopup('<b>' + esc(hq.ad) + '</b><br>' + esc(hq.adres)).addTo(LY.hq);
-  D.mt.filter(m => m.acik).forEach(m => {
-    const pts = [m.o, m.d].filter(Boolean).map(p => [p[0], p[1]]);
-    const pop = '<div class="pop"><b>{{MT}} ' + esc(m.ref) + '</b><div>' + esc(m.cikis) + ' → ' + esc(m.varis) + '</div><div class="small muted">' + esc(m.durum) + ' · ' + esc(m.cekici || '—') + ' / ' + esc(m.dorse || '—') + '</div><div class="small">Kalkış ' + iso2tr(m.kalkis) + ' · Tahmini varış ' + iso2tr(m.tahmini_varis) + '</div><div class="small muted">Veri ' + iso2tr(D.mt_tarih) + ' tarihli (önbellek)</div></div>';
-    if (pts.length === 2) L.polyline(pts, {color: '#7c3aed', weight: 2, opacity: .55, dashArray: '6 6'}).bindPopup(pop).addTo(LY.mt);
-    if (m.d) L.marker([m.d[0], m.d[1]], {icon: icon('mk-mt', 'M', 18)}).bindPopup(pop).bindTooltip(m.ref + (m.cekici ? ' · ' + m.cekici : ''), {direction: 'top'}).addTo(LY.mt);
-  });
-  D.quotes.filter(q => q.o && quoteOk(q, f)).forEach(q => { const m = L.marker([q.o[0], q.o[1]], {icon: icon('mk-quote', 'T', 20), zIndexOffset: 400}).bindPopup(popQuote(q)); m.on('click', () => select('quote', q.id, false)); MK.quote[q.id] = m; LY.quotes.addLayer(m); });
-  if (firstFit) { firstFit = false; map.setView([41, 30], window.innerWidth < 900 ? 3 : 4); }
+  const hq = D.hq || {p: [38.73, 35.48], ad: 'Merkez'};
+  L.marker(hq.p, {icon: icon('mk-hq', '★', 30), zIndexOffset: 1000}).bindTooltip('Merkez', {direction: 'top', offset: [0, -14]}).bindPopup('<b>' + esc(hq.ad) + '</b><br>' + esc(hq.adres || '')).addTo(LY.hq);
+  if (firstFit) { firstFit = false; fitFleet(); }
 }
-map.on('popupopen', (e) => { e.popup.getElement().querySelectorAll('[data-sel]').forEach(a => a.addEventListener('click', (ev) => { ev.preventDefault(); const [k, id] = a.dataset.sel.split(':'); select(k, id, false); })); });
+function fitFleet() { const pts = D.fleet.filter(x => x.p).map(x => [x.p[0], x.p[1]]); pts.push((D.hq || {p: [38.73, 35.48]}).p); map.fitBounds(L.latLngBounds(pts).pad(0.15), {maxZoom: 7}); }
+map.on('popupopen', (e) => { e.popup.getElement().querySelectorAll('[data-sel]').forEach(a => a.addEventListener('click', (ev) => { ev.preventDefault(); const [k, id] = a.dataset.sel.split(':'); select(k, id); })); });
 
 /* ---------- eşleşmeler ---------- */
 function matchesForItem(id) {
   const it = itemOf(id); if (!it) return [];
   const raw = (IDX.mByItem[id] || []).map(m => Object.assign({alt: false}, m));
-  const have = new Set(raw.map(m => m.arac));
-  const g = IDX.gByItem[id];
-  (g ? g.alternatif : []).forEach(a => { if (have.has(a)) return; const t = truckOf(a); if (!t || !t.p || !it.o) return; raw.push({arac: a, arac_kaynak: IDX.fleet[a] ? 'filo' : 'ilan', km: Math.round(hav(it.o, t.p)), gun: null, puan: null, flags: [], alt: true}); have.add(a); });
-  return raw.sort((a, b) => (b.puan || 0) - (a.puan || 0) || a.km - b.km);
+  const have = new Set(raw.map(m => m.arac)); const g = IDX.gByItem[id];
+  (g ? g.alternatif : []).forEach(a => { if (have.has(a)) return; const t = truckOf(a); if (!t || !t.p || !it.o) return; raw.push({arac: a, arac_kaynak: IDX.fleet[a] ? 'filo' : 'ilan', km: Math.round(hav(it.o, t.p)), gun: null, puan: 0, flags: [], alt: true}); have.add(a); });
+  return raw.sort((a, b) => (IDX.fleet[b.arac] ? 1 : 0) - (IDX.fleet[a.arac] ? 1 : 0) || (b.puan || 0) - (a.puan || 0) || a.km - b.km);
 }
-function itemsForTruck(id) { return (IDX.mByTruck[id] || []).slice().sort((a, b) => b.puan - a.puan); }
-function dateFit(g) { if (g == null) return '<span class="muted">—</span>'; return g === 0 ? '<span class="badge b-green">Tarih uyumlu</span>' : '<span class="badge b-amber">±' + g + ' gün</span>'; }
+/* Öz araçlarımız için en iyi yük: araç başına 1 satır */
+function fleetDeals() {
+  const best = {};
+  D.matches.filter(m => m.arac_kaynak === 'filo' && m.tur === 'yük' && !(m.flags || []).includes('teyit gerekir')).forEach(m => { if (!best[m.arac] || m.puan > best[m.arac].puan) best[m.arac] = m; });
+  D.mgroups.filter(g => g.tur === 'yük' && !(g.flags || []).includes('teyit gerekir')).forEach(g => [g.arac].concat(g.alternatif || []).forEach(a => {
+    if (!IDX.fleet[a] || best[a]) return; const it = IDX.load[g.item], t = IDX.fleet[a]; if (!it || !it.o || !t.p) return;
+    const km = Math.round(hav(it.o, t.p)); if (km <= 250) best[a] = {item: g.item, arac: a, km, gun: g.gun, puan: g.puan - 5 - km / 50, flags: g.flags, tur: 'yük'};
+  }));
+  return Object.values(best).sort((a, b) => b.puan - a.puan);
+}
 
 function highlight(kind, id) {
-  hlLayer.clearLayers();
-  const bounds = [];
-  const addHl = (p, color, r) => { L.circleMarker(p, {radius: r || 16, color: color || '#facc15', weight: 3, fillOpacity: .15}).addTo(hlLayer); bounds.push(p); };
+  hlLayer.clearLayers(); const bounds = [];
+  const ring = (p, color, r) => { L.circleMarker(p, {radius: r, color, weight: 3, fillOpacity: .12}).addTo(hlLayer); bounds.push(p); };
   if (kind === 'load' || kind === 'quote') {
     const it = itemOf(id); if (!it || !it.o) return;
-    const o = [it.o[0], it.o[1]]; addHl(o, '#1d4ed8', 14);
-    if (it.d) { L.polyline([o, [it.d[0], it.d[1]]], {color: '#1d4ed8', weight: 2.5, opacity: .7, dashArray: '8 8'}).addTo(hlLayer); L.circleMarker([it.d[0], it.d[1]], {radius: 7, color: '#1d4ed8', fillColor: '#fff', fillOpacity: 1, weight: 3}).bindTooltip('Varış: ' + it.varis_adres).addTo(hlLayer); bounds.push([it.d[0], it.d[1]]); }
-    matchesForItem(id).forEach((m, i) => { const t = truckOf(m.arac); if (!t || !t.p) return; const p = [t.p[0], t.p[1]];
-      L.polyline([o, p], {color: m.alt ? '#94a3b8' : '#f59e0b', weight: m.alt ? 2 : 3.5, opacity: .9}).bindTooltip(truckLabel(m.arac) + ' · ' + m.km + ' km').addTo(hlLayer);
-      addHl(p, m.alt ? '#94a3b8' : '#facc15', 15); });
+    const o = [it.o[0], it.o[1]];
+    L.marker(o, {icon: icon(kind === 'quote' ? 'mk-quote' : 'mk-load', kind === 'quote' ? '€' : '', 22), zIndexOffset: 900}).bindTooltip('Yükleme: ' + place(it.cikis_adres, it.cikis), {permanent: true, direction: 'right', offset: [12, 0]}).addTo(hlLayer); bounds.push(o);
+    if (it.d) { const d = [it.d[0], it.d[1]]; L.polyline([o, d], {color: '#1d4ed8', weight: 3, opacity: .75, dashArray: '8 8'}).addTo(hlLayer); L.circleMarker(d, {radius: 8, color: '#1d4ed8', fillColor: '#fff', fillOpacity: 1, weight: 3}).bindTooltip('Teslim: ' + place(it.varis_adres, it.varis), {permanent: true, direction: 'right', offset: [10, 0]}).addTo(hlLayer); bounds.push(d); }
+    matchesForItem(id).slice(0, 6).forEach(m => { const t = truckOf(m.arac); if (!t || !t.p) return; const p = [t.p[0], t.p[1]];
+      L.polyline([o, p], {color: '#f59e0b', weight: 3.5, opacity: .9}).addTo(hlLayer);
+      if (!IDX.fleet[m.arac]) L.marker(p, {icon: icon('mk-truck', '', 16)}).bindTooltip(cleanCo(t.firma_k) + ' · ' + m.km + ' km').addTo(hlLayer);
+      ring(p, '#f59e0b', 16); });
   } else {
-    const t = truckOf(id); if (!t || !t.p) return; const p = [t.p[0], t.p[1]]; addHl(p, '#facc15', 18);
-    itemsForTruck(id).forEach(m => { const it = itemOf(m.item); if (!it || !it.o) return; const o = [it.o[0], it.o[1]]; L.polyline([p, o], {color: '#f59e0b', weight: 3, opacity: .9}).bindTooltip(m.item + ' · ' + m.km + ' km').addTo(hlLayer); addHl(o, '#1d4ed8', 12); });
+    const t = truckOf(id); if (!t || !t.p) return; const p = [t.p[0], t.p[1]]; ring(p, '#f59e0b', 18);
+    (IDX.mByTruck[id] || []).slice().sort((a, b) => b.puan - a.puan).slice(0, 6).forEach(m => { const it = itemOf(m.item); if (!it || !it.o) return; const o = [it.o[0], it.o[1]]; L.polyline([p, o], {color: '#f59e0b', weight: 3, opacity: .9}).addTo(hlLayer); L.marker(o, {icon: icon('mk-load', '', 16)}).bindTooltip(cleanCo(it.firma_k)).addTo(hlLayer); bounds.push(o); });
   }
-  if (bounds.length > 1) map.fitBounds(L.latLngBounds(bounds).pad(0.25), {maxZoom: 9}); else if (bounds.length) map.setView(bounds[0], Math.max(map.getZoom(), 8));
+  if (bounds.length > 1) map.fitBounds(L.latLngBounds(bounds).pad(0.3), {maxZoom: 9}); else if (bounds.length) map.setView(bounds[0], 8);
 }
 
-function matchTable(id) {
-  const it = itemOf(id), ms = matchesForItem(id);
-  if (!ms.length) return '<div class="banner">Bu ilan için ±250 km / ±2 gün içinde uygun araç bulunamadı. Tedarikçiye sor ya da geç.</div>';
-  return '<div class="tbl-wrap"><table><thead><tr><th>Araç</th><th>Mesafe</th><th>Tarih</th><th>Puan</th><th>Önerilen fiyat</th><th>Not</th></tr></thead><tbody>' + ms.map(m => {
-    const t = truckOf(m.arac) || {};
-    const desc = IDX.fleet[m.arac] ? '<b>🚚 ' + esc(m.arac) + '</b><div class="small muted">Öz filo · ' + esc(t.yakin || '') + '</div>' : '<b>' + esc(m.arac) + '</b> ' + esc(t.firma_k || '') + '<div class="small muted">' + esc(t.bolge || '') + ' · ' + esc(t.arac || '') + (t.link1 ? ' · <a target="_blank" rel="noopener" href="' + esc(t.link1) + '">Gmail</a>' : '') + '</div>';
-    return '<tr class="row" data-truck="' + esc(m.arac) + '"><td>' + desc + '</td><td class="num">' + m.km + ' km</td><td>' + dateFit(m.gun) + '</td><td class="num">' + (m.puan == null ? '<span class="muted small">alternatif</span>' : m.puan) + '</td><td class="num"><b>' + money(it.fiyat, it.para) + '</b><div class="small muted">' + esc(it.fiyat_dayanak || '') + '</div></td><td class="small">' + esc((m.flags || []).join('; ')) + '</td></tr>';
-  }).join('') + '</tbody></table></div>';
-}
-
-function select(kind, id, pan) {
-  sel = {kind, id}; renderSel(); highlight(kind, id); render();
-  if (window.innerWidth < 900) $('sel').scrollIntoView({behavior: 'smooth', block: 'start'});
-}
+function select(kind, id) { sel = {kind, id}; renderSel(); highlight(kind, id); if (window.innerWidth < 900) document.querySelector('.colMap').scrollIntoView({behavior: 'smooth', block: 'start'}); }
 function renderSel() {
   const box = $('sel');
-  if (!sel) { box.classList.add('hidden'); hlLayer.clearLayers(); return; }
+  if (!sel) { box.innerHTML = ''; hlLayer.clearLayers(); return; }
   let h = '';
   if (sel.kind === 'load' || sel.kind === 'quote') {
     const it = itemOf(sel.id); if (!it) { sel = null; return renderSel(); }
-    const isQ = sel.kind === 'quote';
-    h = '<div class="hd"><div><div style="font-weight:700;font-size:14px">' + esc(it.id) + ' · ' + esc(it.firma_k) + ' <span class="badge ' + (ST_BADGE[it.durum] || '') + '">' + esc(it.durum) + '</span>' + (it.adr ? ' <span class="badge b-red">ADR</span>' : '') + '</div>' +
-      '<div class="route"><span class="cc">' + esc(ncc(it.cikis)) + '</span>' + esc(it.cikis_adres) + ' → <span class="cc">' + esc(ncc(it.varis)) + '</span>' + esc(it.varis_adres) + '</div>' +
-      '<div class="small muted">' + (isQ ? esc(it.yuk) + ' · ' + esc(it.arac) : 'Yükleme ' + esc(it.yukleme_tarihi || '—') + ' · ' + esc(it.vgrup) + ' · ' + esc(it.agirlik || '') + ' · ' + esc(it.kaynak)) + ' · <b>Öneri ' + money(it.fiyat, it.para) + '</b>' + (it.link ? ' · <a target="_blank" rel="noopener" href="' + esc(it.link) + '">Gmail\'de aç</a>' : '') + '</div></div><button class="x" id="selX">✕</button></div>' +
-      '<div class="section" style="margin-top:8px">Uygun araçlar</div>' + matchTable(sel.id);
+    const ms = matchesForItem(sel.id);
+    h = '<div class="selHd"><div><div class="selT">' + esc(cleanCo(it.firma_k)) + '</div><div class="selR">' + esc(routeTxt(it)) + '</div><div class="muted">' + esc(sel.kind === 'quote' ? it.yuk : 'Yükleme ' + winTxt(it.win, it.yukleme_tarihi) + ' · ' + (it.vgrup || '') + (it.adr ? ' · ADR' : '')) + '</div></div><button class="x" id="selX" aria-label="Kapat">✕</button></div>' +
+      '<div class="selP">' + money(it.fiyat, it.para) + ' <span class="muted small">önerilen fiyat</span></div>' +
+      (ms.length ? '<div class="selSub">Yakındaki araçlar</div>' + ms.slice(0, 6).map(m => { const t = truckOf(m.arac) || {}; const own = !!IDX.fleet[m.arac];
+        return '<div class="line"><b>' + (own ? '🚚 ' + esc(m.arac) + ' (bizim)' : esc(cleanCo(t.firma_k))) + '</b> – ' + m.km + ' km uzakta' + (m.gun ? ', tarih ' + m.gun + ' gün kayık' : '') + (own ? '' : '<div class="muted small">' + esc(t.bolge || '') + ' · ' + esc(t.arac || '') + (t.link1 ? ' · <a target="_blank" rel="noopener" href="' + esc(t.link1) + '">mail</a>' : '') + '</div>') + (m.flags && m.flags.length ? '<div class="muted small">' + esc(plainFlags(m.flags)) + '</div>' : '') + '</div>'; }).join('')
+        : '<div class="line muted">Yakında uygun araç yok.</div>') +
+      '<div class="btnRow">' + (it.teklif_metni ? '<button class="big pri" data-copy="' + esc(it.id) + '">📋 Teklifi kopyala</button>' : '') + (it.link ? '<a class="big" target="_blank" rel="noopener" href="' + esc(it.link) + '">✉️ Gmail\'de aç</a>' : '') + '</div>';
   } else {
     const t = truckOf(sel.id); if (!t) { sel = null; return renderSel(); }
-    const isF = !!IDX.fleet[sel.id];
-    const ms = itemsForTruck(sel.id);
-    h = '<div class="hd"><div><div style="font-weight:700;font-size:14px">' + (isF ? '🚚 ' + esc(t.plaka) + ' <span class="badge b-blue">Öz filo</span>' : esc(t.id) + ' · ' + esc(t.firma_k)) + '</div><div class="small muted">' +
-      (isF ? esc(FL_ST[t.durum] || t.durum) + ' · ' + esc(t.yakin) + ' · son sinyal ' + esc(t.son || '—') : esc(t.bolge) + ' (' + esc(t.ulke) + ') · ' + esc(t.arac) + ' · ' + esc(t.tarih) + ' · ' + esc(t.kaynak) + (t.link1 ? ' · <a target="_blank" rel="noopener" href="' + esc(t.link1) + '">Gmail</a>' : '')) +
-      '</div></div><button class="x" id="selX">✕</button></div><div class="section" style="margin-top:8px">Bu araca uyan yükler / talepler</div>' +
-      (ms.length ? '<div class="tbl-wrap"><table><thead><tr><th>İlan</th><th>Güzergâh</th><th>Mesafe</th><th>Tarih</th><th>Puan</th><th>Öneri</th></tr></thead><tbody>' + ms.map(m => { const it = itemOf(m.item) || {}; return '<tr class="row" data-item="' + esc(m.item) + '" data-kind="' + (m.tur === 'teklif' ? 'quote' : 'load') + '"><td><b>' + esc(m.item) + '</b><div class="small muted">' + esc(it.firma_k || '') + '</div></td><td class="small">' + esc(it.cikis_adres || '') + ' → ' + esc(it.varis_adres || '') + '</td><td class="num">' + m.km + ' km</td><td>' + dateFit(m.gun) + '</td><td class="num">' + m.puan + '</td><td class="num"><b>' + money(it.fiyat, it.para) + '</b></td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="banner info">Bu araç için eşleşen yük yok (±250 km, ±2 gün, araç/ADR uyumu).</div>');
+    const own = !!IDX.fleet[sel.id]; const ms = (IDX.mByTruck[sel.id] || []).slice().sort((a, b) => b.puan - a.puan);
+    h = '<div class="selHd"><div><div class="selT">' + (own ? '🚚 ' + esc(t.plaka) : esc(cleanCo(t.firma_k))) + '</div><div class="muted">' + (own ? esc(cityOf(t.yakin)) + ' – ' + esc(FL_ST[t.durum] || t.durum) + ' · son sinyal ' + esc(t.son || '—') : esc(t.bolge) + ' · ' + esc(t.arac)) + '</div></div><button class="x" id="selX" aria-label="Kapat">✕</button></div>' +
+      (ms.length ? '<div class="selSub">Bu araca uygun yükler</div>' + ms.slice(0, 8).map(m => { const it = itemOf(m.item) || {}; return '<div class="line click" data-item="' + esc(m.item) + '" data-kind="' + (m.tur === 'teklif' ? 'quote' : 'load') + '"><b>' + esc(cleanCo(it.firma_k)) + '</b> – ' + esc(routeTxt(it)) + '<div class="muted small">' + esc(winTxt(it.win, it.yukleme_tarihi)) + ' · ' + m.km + ' km · <b class="money">' + money(it.fiyat, it.para) + '</b></div></div>'; }).join('') : '<div class="line muted">Şu an bu araca uygun yük yok.</div>');
   }
-  box.innerHTML = h; box.classList.remove('hidden');
-  $('selX').onclick = () => { sel = null; renderSel(); render(); };
-  box.querySelectorAll('tr[data-truck]').forEach(r => r.onclick = () => { const id = r.dataset.truck; const m = MK.fleet[id] || MK.truck[id]; if (m) { if (LY.trucks.hasLayer(m)) LY.trucks.zoomToShowLayer(m, () => m.openPopup()); else { map.setView(m.getLatLng(), 9); m.openPopup(); } } });
-  box.querySelectorAll('tr[data-item]').forEach(r => r.onclick = () => select(r.dataset.kind, r.dataset.item));
+  box.innerHTML = '<div class="selCard">' + h + '</div>';
+  $('selX').onclick = () => { sel = null; renderSel(); fitFleet(); };
+  bindCommon(box);
+  box.querySelectorAll('[data-item]').forEach(r => r.onclick = () => select(r.dataset.kind, r.dataset.item));
 }
 
-/* ---------- tablolar ---------- */
-function table(key, cols, rows, rowAttr) {
+/* ---------- Bugün ---------- */
+function quoteCard(q) {
+  const g = IDX.gByItem[q.id]; const own = g && IDX.fleet[g.arac];
+  return '<div class="card' + (q.acil ? ' urgent' : '') + '">' +
+    '<div class="cTop"><div class="cName">' + esc(cleanCo(q.firma_k)) + '</div>' + (q.acil ? '<span class="tag red">ACİL</span>' : '') + '</div>' +
+    '<div class="cRoute">' + esc(routeTxt(q)) + '</div>' +
+    '<div class="cSub">' + esc(q.yuk) + '</div>' +
+    '<div class="cPrice">' + money(q.fiyat, q.para) + '</div>' +
+    '<div class="cSub">' + esc(daysTxt(q.bekleme)) + (own ? ' · <b>aracımız ' + esc(g.arac) + ' ' + g.km + ' km yakında</b>' : '') + '</div>' +
+    '<div class="btnRow"><button class="big pri" data-copy="' + esc(q.id) + '">📋 Teklifi kopyala</button>' + (q.link ? '<a class="big" target="_blank" rel="noopener" href="' + esc(q.link) + '">✉️ Gmail\'de aç</a>' : '') + '</div>' +
+    '<div class="cLinks"><a href="#" data-sel="quote:' + esc(q.id) + '">Haritada göster</a> · <a href="#" data-show="' + esc(q.id) + '">Metni gör</a></div>' +
+    '<pre class="qt hidden" id="qt-' + esc(q.id) + '">' + esc(q.teklif_metni || '') + '</pre></div>';
+}
+function renderToday() {
+  const open = D.quotes.filter(isOpenQ).sort((a, b) => (b.acil|0) - (a.acil|0) || (a.bekleme||0) - (b.bekleme||0));
+  const deals = fleetDeals();
+  const wait = D.quotes.filter(q => !isOpenQ(q)).map(q => ({ad: cleanCo(q.firma_k), r: routeTxt(q), s: q.sent, g: q.bekleme, link: q.link}))
+    .concat(D.other.filter(o => o.durum !== 'Yeni').map(o => ({ad: cleanCo(o.firma), r: o.konu, s: '', g: (() => { const d = parseTR(o.gelis); return d ? Math.floor((new Date(D.bugun) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5) : null; })(), link: gmail(o.thread)})))
+    .sort((a, b) => (b.g || 0) - (a.g || 0));
+  const newMail = D.other.filter(o => o.durum === 'Yeni');
+  let h = '<div class="blk"><h2>1 · Teklif ver <span class="cnt">' + open.length + '</span></h2>' + (open.map(quoteCard).join('') || '<div class="empty">Bekleyen teklif talebi yok 👍</div>') +
+    (newMail.length ? newMail.map(o => '<div class="row2"><div><b>' + esc(cleanCo(o.firma)) + '</b> – ' + esc(o.konu) + '</div><a class="sm" target="_blank" rel="noopener" href="' + gmail(o.thread) + '">Cevapla ✉️</a></div>').join('') : '') + '</div>';
+  h += '<div class="blk"><h2>2 · Aracım var, yük var <span class="cnt">' + deals.length + '</span></h2>' +
+    (deals.length ? deals.slice(0, 8).map(m => { const f = IDX.fleet[m.arac], it = IDX.load[m.item]; if (!f || !it) return '';
+      const where = f.durum === 'driving' ? cityOf(f.yakin) + ' yakınında yolda' : cityOf(f.yakin) + '\'de duruyor';
+      return '<div class="deal" data-sel="load:' + esc(it.id) + '"><div class="dTruck">🚚 ' + esc(f.plaka) + ' <span class="muted">' + esc(where) + '</span></div>' +
+        '<div class="dLoad">→ <b>' + esc(cleanCo(it.firma_k)) + '</b> ' + esc(routeTxt(it)) + '</div>' +
+        '<div class="dMeta">' + esc(winTxt(it.win, it.yukleme_tarihi)) + ' · ' + m.km + ' km · <b class="money">' + money(it.fiyat, it.para) + '</b>' + (it.link ? ' · <a target="_blank" rel="noopener" href="' + esc(it.link) + '">Gmail\'de aç</a>' : '') + '</div>' +
+        (m.flags && m.flags.length ? '<div class="muted small">' + esc(plainFlags(m.flags)) + '</div>' : '') + '</div>'; }).join('')
+      : '<div class="empty">Şu an araçlarımıza yakın yük yok.</div>') + '</div>';
+  h += '<div class="blk"><h2>3 · Bekleyen <span class="cnt">' + wait.length + '</span></h2>' + (wait.map(w => '<div class="row2"><div><b>' + esc(w.ad) + '</b> – ' + esc(w.r) + (w.s ? '<div class="muted small">Verdiğimiz fiyat: ' + esc(w.s) + '</div>' : '') + '</div><div class="right"><span class="tag' + ((w.g || 0) >= 5 ? ' red' : '') + '">' + (w.g == null ? '' : w.g + ' gündür cevap yok') + '</span>' + (w.link ? '<a class="sm" target="_blank" rel="noopener" href="' + esc(w.link) + '">Gmail</a>' : '') + '</div></div>').join('') || '<div class="empty">Bekleyen yok.</div>') + '</div>';
+  const stale = D.fleet.filter(f => f.eski || f.durum === 'nodata').map(f => f.plaka);
+  h += '<div class="note">' + (stale.length ? 'Konumu gelmeyen araçlar: ' + esc(stale.join(', ')) + '. ' : '') + '{{MT}} bilgisi ' + esc(iso2tr(D.mt_tarih)) + ' tarihli (canlı bağlantı kapalı). Fiyatlar öneridir.</div>';
+  return h;
+}
+
+/* ---------- Detay ---------- */
+function table(key, cols, rows, attr) {
   const s = sortState[key] || {};
   if (s.col != null) { const c = cols[s.col]; const v = c.sv || ((r) => r[c.k]); rows = rows.slice().sort((a, b) => { const x = v(a), y = v(b); const r = (typeof x === 'number' && typeof y === 'number') ? x - y : String(x == null ? '' : x).localeCompare(String(y == null ? '' : y), 'tr', {numeric: true}); return s.dir === 'desc' ? -r : r; }); }
-  if (!rows.length) return '<div class="empty">Filtreye uyan kayıt yok.</div>';
-  return '<div class="tbl-wrap"><table data-key="' + key + '"><thead><tr>' + cols.map((c, i) => '<th data-i="' + i + '" class="' + (s.col === i ? 's-' + s.dir : '') + (c.num ? ' num' : '') + '">' + c.h + '</th>').join('') + '</tr></thead><tbody>' +
-    rows.map(r => '<tr class="row' + (rowAttr.on(r) ? ' on' : '') + '" ' + rowAttr.attr(r) + '>' + cols.map(c => '<td' + (c.num ? ' class="num"' : '') + '>' + (c.r ? c.r(r) : esc(r[c.k])) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+  if (!rows.length) return '<div class="empty">Kayıt yok.</div>';
+  return '<div class="tw"><table data-key="' + key + '"><thead><tr>' + cols.map((c, i) => '<th data-i="' + i + '" class="' + (s.col === i ? 's-' + s.dir : '') + '">' + c.h + '</th>').join('') + '</tr></thead><tbody>' +
+    rows.map(r => '<tr ' + (attr ? attr(r) : '') + '>' + cols.map(c => '<td>' + (c.r ? c.r(r) : esc(r[c.k])) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
 }
-function bindTable() {
-  $('content').querySelectorAll('table[data-key] th').forEach(th => th.onclick = () => { const k = th.closest('table').dataset.key, i = +th.dataset.i; const s = sortState[k] || {}; sortState[k] = {col: i, dir: s.col === i && s.dir === 'asc' ? 'desc' : 'asc'}; render(); });
-  $('content').querySelectorAll('tr[data-sel]').forEach(tr => tr.onclick = (e) => { if (e.target.closest('a,button')) return; const [k, id] = tr.dataset.sel.split(':'); select(k, id); const m = MK[k] && MK[k][id]; if (m && (k === 'load' || k === 'truck')) { const grp = k === 'load' ? LY.loads : LY.trucks; if (grp.hasLayer(m)) grp.zoomToShowLayer(m, () => {}); } });
+const SUBS = [['yuk', 'Yükler'], ['arac', 'Boş araçlar'], ['eslesme', 'Uygun eşleşmeler'], ['teklif', 'Tüm teklifler'], ['filo', 'Araçlarımız'], ['mt', '{{MT}}']];
+function renderDetail() {
+  const q = ($('dq') && $('dq').value || '').toLocaleLowerCase('tr');
+  const hit = (o, ks) => !q || ks.map(k => o[k] == null ? '' : String(o[k])).join(' ').toLocaleLowerCase('tr').includes(q);
+  let h = '<div class="subs">' + SUBS.map(s => '<button data-s="' + s[0] + '" class="' + (sub === s[0] ? 'on' : '') + '">' + s[1] + '</button>').join('') + '</div>' +
+    '<input id="dq" class="search" type="search" placeholder="Ara: firma, şehir, plaka…" value="' + esc(q) + '">';
+  const gm = (l) => l ? '<a target="_blank" rel="noopener" href="' + esc(l) + '">Gmail</a>' : '';
+  if (sub === 'yuk') {
+    const rows = D.loads.filter(l => hit(l, ['firma', 'cikis_adres', 'varis_adres', 'arac', 'yukleme_tarihi', 'urun']));
+    h += '<div class="muted small pad">' + rows.length + ' yük ilanı (son 14 gün). Satıra dokun → haritada uygun araçlar.</div>' + table('yuk', [
+      {h: 'Firma', k: 'firma_k', r: r => esc(cleanCo(r.firma_k))},
+      {h: 'Nereden → Nereye', k: 'r', r: r => esc(routeTxt(r)), sv: r => routeTxt(r)},
+      {h: 'Yükleme', k: 'w', r: r => esc(winTxt(r.win, r.yukleme_tarihi) || '—'), sv: r => r.win ? r.win[0] : ''},
+      {h: 'Araç', k: 'vgrup', r: r => esc(r.vgrup) + (r.adr ? ' · ADR' : '')},
+      {h: 'Fiyat', k: 'fiyat', r: r => '<b class="money">' + money(r.fiyat, r.para) + '</b>', sv: r => r.fiyat || 0},
+      {h: 'Uygun araç', k: 'm', r: r => { const n = (IDX.mByItem[r.id] || []).length; return n ? n + ' araç' : '–'; }, sv: r => (IDX.mByItem[r.id] || []).length},
+      {h: '', k: 'link', r: r => gm(r.link)},
+    ], rows, r => 'class="click" data-sel="load:' + esc(r.id) + '"');
+  } else if (sub === 'arac') {
+    const rows = D.trucks.filter(t => hit(t, ['firma', 'bolge', 'ulke', 'arac', 'tarih']));
+    h += '<div class="muted small pad">Başka firmaların boş araç ilanları. Bazıları birkaç günlük, aramadan önce hâlâ boş mu sor.</div>' + table('arac', [
+      {h: 'Firma', k: 'firma_k', r: r => esc(cleanCo(r.firma_k))},
+      {h: 'Nerede', k: 'bolge', r: r => esc(r.bolge) + (r.ulke ? ' (' + esc(r.ulke) + ')' : '')},
+      {h: 'Araç', k: 'arac'}, {h: 'Ne zaman', k: 'tarih'},
+      {h: 'Gün', k: 'bekleme', r: r => esc(r.bekleme) + ' gün önce'},
+      {h: '', k: 'link1', r: r => gm(r.link1)},
+    ], rows, r => 'class="click" data-sel="truck:' + esc(r.id) + '"');
+  } else if (sub === 'eslesme') {
+    const rows = D.mgroups.filter(g => { const it = itemOf(g.item); return it && hit(it, ['firma', 'cikis_adres', 'varis_adres']); });
+    h += '<div class="muted small pad">Yüke 250 km ve 2 gün içinde uyan araçlar.</div>' + table('esl', [
+      {h: 'Müşteri', k: 'i', r: r => esc(cleanCo((itemOf(r.item) || {}).firma_k))},
+      {h: 'Nereden → Nereye', k: 'r', r: r => esc(routeTxt(itemOf(r.item)))},
+      {h: 'En yakın araç', k: 'arac', r: r => IDX.fleet[r.arac] ? '🚚 ' + esc(r.arac) + ' (bizim)' : esc(cleanCo((truckOf(r.arac) || {}).firma_k))},
+      {h: 'Uzaklık', k: 'km', r: r => r.km + ' km'},
+      {h: 'Fiyat', k: 'f', r: r => '<b class="money">' + money((itemOf(r.item) || {}).fiyat, (itemOf(r.item) || {}).para) + '</b>', sv: r => (itemOf(r.item) || {}).fiyat || 0},
+      {h: 'Not', k: 'flags', r: r => esc(plainFlags(r.flags))},
+    ], rows, r => 'class="click" data-sel="' + (r.tur === 'teklif' ? 'quote' : 'load') + ':' + esc(r.item) + '"');
+  } else if (sub === 'teklif') {
+    const rows = D.quotes.filter(x => hit(x, ['firma', 'cikis_adres', 'varis_adres', 'yuk']));
+    h += table('tek', [
+      {h: 'Müşteri', k: 'firma_k', r: r => esc(cleanCo(r.firma_k))},
+      {h: 'Nereden → Nereye', k: 'r', r: r => esc(routeTxt(r))},
+      {h: 'Durum', k: 'durum', r: r => isOpenQ(r) ? 'Teklif verilecek' : 'Cevap bekleniyor'},
+      {h: 'Fiyat', k: 'fiyat', r: r => '<b class="money">' + (r.sent ? esc(r.sent) : money(r.fiyat, r.para)) + '</b>', sv: r => r.fiyat || 0},
+      {h: 'Geldi', k: 'bekleme', r: r => esc(daysTxt(r.bekleme))},
+      {h: '', k: 'link', r: r => gm(r.link)},
+    ], rows, r => 'class="click" data-sel="quote:' + esc(r.id) + '"');
+  } else if (sub === 'filo') {
+    h += table('filo', [
+      {h: 'Plaka', k: 'plaka', r: r => '<b>' + esc(r.plaka) + '</b>'},
+      {h: 'Nerede', k: 'yakin', r: r => esc(cityOf(r.yakin))},
+      {h: 'Durum', k: 'durum', r: r => esc(FL_ST[r.durum] || r.durum) + (r.hiz ? ' · ' + r.hiz + ' km/s' : '') + (r.eski ? ' · konum eski' : '')},
+      {h: 'Son sinyal', k: 'son', sv: r => +(parseTR(r.son) || 0)},
+      {h: 'Uygun yük', k: 'm', r: r => { const n = (IDX.mByTruck[r.plaka] || []).length; return n ? n + ' yük' : '–'; }, sv: r => (IDX.mByTruck[r.plaka] || []).length},
+    ], D.fleet.filter(f => hit(f, ['plaka', 'yakin'])), r => 'class="click" data-sel="fleet:' + esc(r.plaka) + '"') + '<div class="muted small pad">Konumlar {{FL}} sisteminden 5 dakikada bir alınır (son: ' + esc((D.fleet_zaman || '').replace('T', ' ')) + ').</div>';
+  } else if (sub === 'mt') {
+    h += '<div class="note">Bu liste ' + esc(iso2tr(D.mt_tarih)) + ' tarihli. Canlı bağlantı için {{MT}} hesabında API izni açılmalı.</div>' + table('mt', [
+      {h: 'Pozisyon', k: 'ref'}, {h: 'Nereden → Nereye', k: 'cikis', r: r => esc(r.cikis) + ' → ' + esc(r.varis)},
+      {h: 'Araç', k: 'cekici', r: r => esc(r.cekici || '—')}, {h: 'Çıkış', k: 'kalkis', r: r => iso2tr(r.kalkis)}, {h: 'Varış (tahmini)', k: 'tahmini_varis', r: r => iso2tr(r.tahmini_varis)},
+    ], D.mt.filter(m => m.acik && hit(m, ['ref', 'cikis', 'varis', 'cekici'])));
+  }
+  return h;
 }
-const isOn = (k) => (r) => sel && sel.kind === k && sel.id === (r.id || r.plaka);
-const route = (a, ca, b, cb) => '<span class="cc">' + esc(ncc(ca)) + '</span>' + esc(a) + ' <span class="muted">→</span> <span class="cc">' + esc(ncc(cb)) + '</span>' + esc(b);
 
-const TABS = [
-  ['teklif', 'Teklif Talepleri', () => D.quotes.filter(q => ['Teklif hazır', 'Yeni', 'Eşleşti'].includes(q.durum)).length],
-  ['yuk', 'Yükler', () => D.loads.filter(l => loadOk(l, F())).length],
-  ['arac', 'Boş Araçlar', () => D.trucks.filter(t => truckOk(t, F())).length],
-  ['eslesme', 'Eşleşmeler', () => D.mgroups.length],
-  ['bugun', 'Bugün Yapılacaklar', () => (D.todo || []).length],
-  ['filo', 'Filo', () => D.fleet.length],
-  ['mt', '{{MT}}', () => D.mt.filter(m => m.acik).length],
-];
-function renderTabs() {
-  $('tabs').innerHTML = TABS.map(t => '<button class="tab' + (tab === t[0] ? ' on' : '') + '" data-t="' + t[0] + '">' + t[1] + '<span class="n">' + t[2]() + '</span></button>').join('');
-  $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => { tab = b.dataset.t; render(); $('content').scrollTop = 0; });
-  const showF = ['yuk', 'arac', 'teklif', 'eslesme'].includes(tab);
-  $('filters').classList.toggle('hidden', !showF && !$('fSearch').value);
+/* ---------- çizim ---------- */
+function bindCommon(el) {
+  el.querySelectorAll('[data-copy]').forEach(b => b.onclick = (e) => { e.stopPropagation(); const it = itemOf(b.dataset.copy); if (it && it.teklif_metni) copyText(it.teklif_metni); else toast('Bu talep için hazır metin yok'); });
+  el.querySelectorAll('[data-sel]').forEach(a => a.onclick = (e) => { if (e.target.closest('a[target], button[data-copy]')) return; e.preventDefault(); const [k, id] = a.dataset.sel.split(':'); select(k, id); });
+  el.querySelectorAll('[data-show]').forEach(a => a.onclick = (e) => { e.preventDefault(); const p = $('qt-' + a.dataset.show); p.classList.toggle('hidden'); a.textContent = p.classList.contains('hidden') ? 'Metni gör' : 'Metni gizle'; });
 }
-
-function quoteCard(q) {
-  const open = ['Teklif hazır', 'Yeni', 'Eşleşti'].includes(q.durum);
-  const g = IDX.gByItem[q.id];
-  return '<div class="card' + (q.acil ? ' urgent' : '') + '"><h4>' + esc(q.id) + ' · ' + esc(q.firma_k) + ' <span class="badge ' + (ST_BADGE[q.durum] || '') + '">' + esc(q.durum) + '</span>' + (q.acil ? '<span class="badge b-red">ACİL</span>' : '') + (q.adr ? '<span class="badge b-red">ADR</span>' : '') + '<span class="badge b-gray">' + (q.bekleme == null ? '' : q.bekleme + ' gün') + '</span></h4>' +
-    '<div class="route">' + route(q.cikis_adres, q.cikis, q.varis_adres, q.varis) + '</div>' +
-    '<div class="kv"><div>Geliş</div><div>' + esc(q.gelis) + ' · ' + esc(q.email) + '</div><div>Yük</div><div>' + esc(q.yuk) + '</div><div>Araç</div><div>' + esc(q.arac) + '</div><div>İstek</div><div>' + esc(q.istek) + '</div>' +
-    (q.sent ? '<div>Gönderilen</div><div><b>' + esc(q.sent) + '</b></div>' : '') +
-    (g ? '<div>Yakın araç</div><div>' + esc(truckLabel(g.arac)) + ' · ' + g.km + ' km' + (g.flags.length ? ' <span class="small muted">(' + esc(g.flags.join('; ')) + ')</span>' : '') + '</div>' : '') +
-    '</div><div><span class="price">' + money(q.fiyat, q.para) + '</span> <span class="small muted">' + (open ? 'öneri · ' : 'referans · ') + esc(q.fiyat_dayanak || '') + '</span></div>' +
-    (q.teklif_metni ? '<details' + (q.acil ? ' open' : '') + '><summary class="small" style="cursor:pointer;margin-top:6px;color:#1d4ed8">Teklif metni (şablon)</summary><pre class="qt">' + esc(q.teklif_metni) + '</pre></details>' : '') +
-    '<div class="btns">' + (q.teklif_metni ? '<button class="btn pri" data-copy="' + esc(q.id) + '">📋 Teklif metnini kopyala</button>' : '') + (q.link ? '<a class="btn" target="_blank" rel="noopener" href="' + esc(q.link) + '">✉️ Gmail konuşması</a>' : '') + '<button class="btn" data-sel="quote:' + esc(q.id) + '">🗺️ Haritada / araçlar</button></div></div>';
-}
-
 function render() {
   if (!D) return;
-  renderTabs();
-  const f = F(); let h = '';
-  if (tab === 'teklif') {
-    const qs = D.quotes.filter(q => quoteOk(q, f));
-    const open = qs.filter(q => ['Teklif hazır', 'Yeni', 'Eşleşti'].includes(q.durum)).sort((a, b) => (b.acil|0) - (a.acil|0) || (a.bekleme||0) - (b.bekleme||0));
-    const fu = qs.filter(q => !open.includes(q)).sort((a, b) => (b.bekleme||0) - (a.bekleme||0));
-    h += '<div class="section">Açık – teklif gönderilecek (' + open.length + ')</div>' + (open.map(quoteCard).join('') || '<div class="empty">Açık talep yok.</div>');
-    h += '<div class="section">Takipte – cevap bekleniyor (' + fu.length + ')</div>' + (fu.map(quoteCard).join('') || '<div class="empty">Yok.</div>');
-    if (D.other && D.other.length) h += '<div class="section">Diğer gelen mailler (' + D.other.length + ')</div>' + table('other', [{h: 'Firma', k: 'firma'}, {h: 'Konu', k: 'konu'}, {h: 'Geliş', k: 'gelis', r: r => '<span class="nowrap">' + esc(r.gelis) + '</span>', sv: r => +(parseTR(r.gelis) || 0)}, {h: 'Durum', k: 'durum', r: r => '<span class="badge ' + (ST_BADGE[r.durum] || '') + '">' + esc(r.durum) + '</span>'}, {h: '', k: 'thread', r: r => r.thread ? '<a target="_blank" rel="noopener" href="' + gmail(r.thread) + '">Gmail</a>' : ''}], D.other, {on: () => false, attr: () => ''});
-    h += '<div class="banner info small">Not: Şablondaki "{{PDFLINE}}" satırı için PDF eki henüz üretilmiyor; göndermeden önce satırı sil veya PDF ekle. Fiyatlar öneridir. Mail gönderimi bu panelden yapılmaz.</div>';
-  } else if (tab === 'yuk') {
-    const rows = D.loads.filter(l => loadOk(l, f));
-    h = table('yuk', [
-      {h: 'ID', k: 'id', r: r => '<b>' + esc(r.id) + '</b><div class="small muted">' + esc(r.kaynak) + '</div>'},
-      {h: 'Firma', k: 'firma_k', r: r => esc(r.firma_k) + '<div class="small muted">' + esc(r.gelis.slice(0, 16)) + '</div>'},
-      {h: 'Güzergâh', k: 'cikis', r: r => '<div class="small">' + route(r.cikis_adres, r.cikis, r.varis_adres, r.varis) + '</div>', sv: r => ncc(r.cikis) + ncc(r.varis)},
-      {h: 'Yükleme', k: 'win', r: r => '<span class="nowrap">' + esc(r.yukleme_tarihi || '—') + '</span>' + (r.tarih_belirsiz ? '<div class="small muted">belirsiz</div>' : ''), sv: r => r.win ? r.win[0] : ''},
-      {h: 'Araç', k: 'vgrup', r: r => esc(r.vgrup) + (r.adr ? ' <span class="badge b-red">ADR</span>' : '') + '<div class="small muted">' + esc(r.agirlik || '') + '</div>'},
-      {h: 'Öneri', k: 'fiyat', num: 1, r: r => '<b>' + money(r.fiyat, r.para) + '</b>', sv: r => r.fiyat || 0},
-      {h: 'Eşl.', k: 'm', num: 1, r: r => { const n = (IDX.mByItem[r.id] || []).length; return n ? '<span class="badge b-green">' + n + '</span>' : '<span class="muted">–</span>'; }, sv: r => (IDX.mByItem[r.id] || []).length},
-      {h: 'Durum', k: 'durum', r: r => '<span class="badge ' + (ST_BADGE[r.durum] || '') + '">' + esc(r.durum) + '</span>' + (r.teyit ? '<div class="small muted">teyit gerekir</div>' : '')},
-      {h: 'Gün', k: 'bekleme', num: 1},
-      {h: '', k: 'link', r: r => r.link ? '<a target="_blank" rel="noopener" href="' + esc(r.link) + '">Gmail</a>' : ''},
-    ], rows, {on: isOn('load'), attr: r => 'data-sel="load:' + esc(r.id) + '"'});
-  } else if (tab === 'arac') {
-    const rows = D.trucks.filter(t => truckOk(t, f));
-    h = '<div class="banner small">İlan araçları (CSV) 4+ gün eski olabilir – müsaitliği teyit et.</div>' + table('arac', [
-      {h: 'ID', k: 'id', r: r => '<b>' + esc(r.id) + '</b><div class="small muted">' + esc(r.kaynak) + '</div>'},
-      {h: 'Firma', k: 'firma_k', r: r => esc(r.firma_k) + '<div class="small muted">' + esc(r.email || '') + '</div>'},
-      {h: 'Konum', k: 'bolge', r: r => '<span class="cc">' + esc(ncc(r.cc)) + '</span>' + esc(r.bolge) + (r.gidebilecegi ? '<div class="small muted">→ ' + esc(r.gidebilecegi) + '</div>' : '')},
-      {h: 'Araç', k: 'vgrup', r: r => esc(r.arac) + (r.adr ? ' <span class="badge b-red">ADR</span>' : '') + (r.adet ? '<div class="small muted">' + esc(r.adet) + ' adet</div>' : '')},
-      {h: 'Müsait', k: 'tarih', r: r => esc(r.tarih || '—'), sv: r => r.win ? r.win[0] : ''},
-      {h: 'Eşl.', k: 'm', num: 1, r: r => { const n = (IDX.mByTruck[r.id] || []).length; return n ? '<span class="badge b-green">' + n + '</span>' : '<span class="muted">–</span>'; }, sv: r => (IDX.mByTruck[r.id] || []).length},
-      {h: 'Gün', k: 'bekleme', num: 1},
-      {h: '', k: 'link1', r: r => r.link1 ? '<a target="_blank" rel="noopener" href="' + esc(r.link1) + '">Gmail</a>' : ''},
-    ], rows, {on: isOn('truck'), attr: r => 'data-sel="truck:' + esc(r.id) + '"'});
-  } else if (tab === 'eslesme') {
-    const rows = D.mgroups.filter(g => { const it = itemOf(g.item); if (!it) return false; if (g.tur === 'yük') return loadOk(it, f); return quoteOk(it, f); });
-    h = '<div class="banner info small">Kural: çıkışa ±250 km, ±2 gün, araç tipi ve ADR uyumu. Fiyat önerisi {{KMRATE}} ({{GULF}}). Satıra tıkla → haritada araçlar ve çizgiler.</div>' + table('eslesme', [
-      {h: 'İlan', k: 'item', r: r => '<b>' + esc(r.item) + '</b> <span class="badge ' + (r.tur === 'teklif' ? 'b-amber' : 'b-blue') + '">' + esc(r.tur) + '</span><div class="small muted">' + esc((itemOf(r.item) || {}).firma_k || '') + '</div>'},
-      {h: 'Güzergâh', k: 'r', r: r => { const it = itemOf(r.item); return '<div class="small">' + route(it.cikis_adres, it.cikis, it.varis_adres, it.varis) + '</div>'; }, sv: r => (itemOf(r.item) || {}).cikis_adres},
-      {h: 'En iyi araç', k: 'arac', r: r => esc(truckLabel(r.arac)) + (r.alternatif.length ? '<div class="small muted">+' + r.alternatif.length + ' alternatif</div>' : '')},
-      {h: 'Mesafe', k: 'km', num: 1, r: r => r.km + ' km'},
-      {h: 'Tarih', k: 'gun', r: r => dateFit(r.gun)},
-      {h: 'Puan', k: 'puan', num: 1},
-      {h: 'Öneri', k: 'f', num: 1, r: r => { const it = itemOf(r.item); return '<b>' + money(it.fiyat, it.para) + '</b>'; }, sv: r => (itemOf(r.item) || {}).fiyat || 0},
-      {h: 'Not', k: 'flags', r: r => '<span class="small">' + esc(r.flags.join('; ')) + '</span>', sv: r => r.flags.join()},
-    ], rows, {on: r => sel && sel.id === r.item, attr: r => 'data-sel="' + (r.tur === 'teklif' ? 'quote' : 'load') + ':' + esc(r.item) + '"'});
-  } else if (tab === 'bugun') {
-    h = '<div class="section">Bugün yapılacaklar – ' + esc(iso2tr(D.bugun)) + '</div>' + (D.todo || []).map(t => '<div class="todo t-' + esc(t.ton) + '"><div class="dot"></div><div><div class="tt">' + esc(t.baslik) + '</div><div class="td">' + esc(t.detay) + '</div><div class="small" style="margin-top:3px">' + (t.ref ? '<a href="#" data-ref="' + esc(t.ref) + '">Haritada göster</a>' : '') + (t.ref && t.thread ? ' · ' : '') + (t.thread ? '<a target="_blank" rel="noopener" href="' + gmail(t.thread) + '">Gmail</a>' : '') + '</div></div></div>').join('');
-  } else if (tab === 'filo') {
-    h = '<div class="banner info small">{{FL}} ({{FLV}}) canlı konum – sunucu her 5 dakikada salt okuma ile yeniler. Son çekim: ' + esc((D.fleet_zaman || '').replace('T', ' ')) + '. Konum yerine en yakın merkez gösterilir.</div>' + table('filo', [
-      {h: 'Plaka', k: 'plaka', r: r => '<b>🚚 ' + esc(r.plaka) + '</b>'},
-      {h: 'Durum', k: 'durum', r: r => '<span class="badge ' + (r.durum === 'driving' ? 'b-blue' : r.durum === 'nodata' ? 'b-red' : 'b-gray') + '">' + esc(FL_ST[r.durum] || r.durum) + '</span>' + (r.eski ? ' <span class="badge b-amber">eski</span>' : '')},
-      {h: 'Hız', k: 'hiz', num: 1, r: r => r.hiz ? r.hiz + ' km/s' : '–', sv: r => r.hiz || 0},
-      {h: 'Yakın', k: 'yakin'},
-      {h: 'Son sinyal', k: 'son', r: r => '<span class="nowrap">' + esc(r.son || '—') + '</span>', sv: r => +(parseTR(r.son) || 0)},
-      {h: 'Eşl.', k: 'm', num: 1, r: r => { const n = (IDX.mByTruck[r.plaka] || []).length; return n ? '<span class="badge b-green">' + n + '</span>' : '<span class="muted">–</span>'; }, sv: r => (IDX.mByTruck[r.plaka] || []).length},
-    ], D.fleet, {on: isOn('fleet'), attr: r => 'data-sel="fleet:' + esc(r.plaka) + '"'}) + '<div class="banner small">Öz araçların ADR durumu bilinmiyor; ADR yüklerle eşleştirilmez. Veri yok / eski sinyal: GPS cihazını kontrol et.</div>';
-  } else if (tab === 'mt') {
-    const all = $('mtAll') && $('mtAll').checked;
-    const rows = D.mt.filter(m => all || m.acik);
-    h = '<div class="banner">{{MT}} verisi <b>' + esc(iso2tr(D.mt_tarih)) + '</b> tarihli önbellekten. Canlı erişim reddediliyor (API yetkisi gerekli); tekrar giriş denenmez.</div>' +
-      '<div style="padding:4px 12px"><label class="small"><input type="checkbox" id="mtAll"' + (all ? ' checked' : '') + '> Kapalı/geçmiş pozisyonları da göster (' + D.mt.length + ')</label></div>' + table('mt', [
-      {h: 'Pozisyon', k: 'ref', r: r => '<b>' + esc(r.ref) + '</b><div class="small muted">' + (r.tip === 'owned' ? 'özmal' : esc(r.tip || '')) + '</div>'},
-      {h: 'Durum', k: 'durum', r: r => '<span class="badge ' + (r.acik ? 'b-purple' : 'b-gray') + '">' + esc(r.durum) + '</span>'},
-      {h: 'Güzergâh', k: 'cikis', r: r => '<span class="small">' + esc(r.cikis) + ' → ' + esc(r.varis) + '</span>'},
-      {h: 'Çekici / dorse', k: 'cekici', r: r => esc(r.cekici || '—') + '<div class="small muted">' + esc(r.dorse || '') + '</div>'},
-      {h: 'Kalkış', k: 'kalkis', r: r => '<span class="nowrap">' + iso2tr(r.kalkis) + '</span>'},
-      {h: 'Tah. varış', k: 'tahmini_varis', r: r => '<span class="nowrap">' + iso2tr(r.tahmini_varis) + '</span>'},
-      {h: 'Navlun', k: 'navlun', r: r => esc(r.navlun || '—')},
-    ], rows, {on: () => false, attr: r => (r.d ? 'data-mt="' + esc(r.ref) + '"' : '')});
+  const m = $('main');
+  if (view === 'bugun') m.innerHTML = renderToday();
+  else {
+    const hadFocus = document.activeElement && document.activeElement.id === 'dq'; const pos = hadFocus ? $('dq').selectionStart : 0;
+    m.innerHTML = renderDetail();
+    m.querySelectorAll('.subs button').forEach(b => b.onclick = () => { sub = b.dataset.s; render(); });
+    m.querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.closest('table').dataset.key, i = +th.dataset.i; const s = sortState[k] || {}; sortState[k] = {col: i, dir: s.col === i && s.dir === 'asc' ? 'desc' : 'asc'}; render(); });
+    let t; $('dq').oninput = () => { clearTimeout(t); t = setTimeout(render, 250); };
+    if (hadFocus) { $('dq').focus(); $('dq').setSelectionRange(pos, pos); }
   }
-  $('content').innerHTML = h;
-  bindTable();
-  $('content').querySelectorAll('[data-copy]').forEach(b => b.onclick = () => copyText(IDX.quote[b.dataset.copy].teklif_metni));
-  $('content').querySelectorAll('button[data-sel]').forEach(b => b.onclick = () => { const [k, id] = b.dataset.sel.split(':'); select(k, id); });
-  $('content').querySelectorAll('[data-ref]').forEach(a => a.onclick = (e) => { e.preventDefault(); const id = a.dataset.ref; select(IDX.quote[id] ? 'quote' : 'load', id); });
-  $('content').querySelectorAll('tr[data-mt]').forEach(tr => tr.onclick = () => { const m = D.mt.find(x => x.ref === tr.dataset.mt); if (m) { const b = [m.o, m.d].filter(Boolean).map(p => [p[0], p[1]]); if (b.length > 1) map.fitBounds(b, {padding: [40, 40]}); else map.setView(b[0], 7); } });
-  const mtAll = $('mtAll'); if (mtAll) mtAll.onchange = render;
-}
-
-function renderCounters() {
-  const openQ = D.quotes.filter(q => ['Teklif hazır', 'Yeni', 'Eşleşti'].includes(q.durum));
-  const urgent = openQ.filter(q => q.acil).length;
-  const act = D.fleet.filter(x => x.durum !== 'nodata' && !x.eski).length;
-  const C = [
-    ['teklif', openQ.length, 'Açık teklif' + (urgent ? ' · ' + urgent + ' acil' : ''), urgent ? 'red' : 'amber'],
-    ['teklif', D.quotes.length - openQ.length, 'Takipte', ''],
-    ['yuk', D.loads.length, 'Yük', ''],
-    ['arac', D.trucks.length, 'Boş araç', 'green'],
-    ['eslesme', D.mgroups.length, 'Eşleşme', 'green'],
-    ['filo', act + '/' + D.fleet.length, 'Öz filo aktif', ''],
-    ['mt', D.mt.filter(m => m.acik).length, '{{MT}} açık', ''],
-    ['bugun', (D.todo || []).length, 'Bugün', 'amber'],
-  ];
-  $('counters').innerHTML = C.map(c => '<div class="cnt ' + c[3] + '" data-t="' + c[0] + '"><b>' + c[1] + '</b><span>' + c[2] + '</span></div>').join('');
-  $('counters').querySelectorAll('.cnt').forEach(e => e.onclick = () => { tab = e.dataset.t; render(); });
+  bindCommon(m);
 }
 function renderUpd() {
-  const g = parseTR(D.guncelleme), fz = D.fleet_zaman ? new Date(D.fleet_zaman) : null;
-  const oto = D.oto_yenileme || {};
-  const ageMin = g ? (Date.now() - g.getTime()) / 60000 : 0;
-  let h = 'Son güncelleme: <b>' + esc(D.guncelleme) + '</b> (' + ago(g) + ')' + (ageMin > 30 && !OFFLINE ? ' <span class="warn">⚠</span>' : '');
-  h += '<br>Filo: ' + esc((D.fleet_zaman || '').replace('T', ' ')) + ' · Gmail penceresi ' + esc(D.pencere) + '+ · <span class="warn">{{MT}} önbellek: ' + esc(iso2tr(D.mt_tarih)) + '</span>';
-  if (OFFLINE) h += '<br><span class="warn">Çevrimdışı kopya – otomatik yenilenmez</span>';
-  else if (SRC) h += (lastFetch ? '<br>Ekran ' + lastFetch.toLocaleTimeString('tr-TR', {hour: '2-digit', minute: '2-digit'}) + '\'de yenilendi · her 60 sn' : '') + (D.yayin_zamani ? ' · yayın ' + esc(D.yayin_zamani) : '');
-  else if (oto.hata) h += '<br><span class="bad">Oto-yenileme: ' + esc(oto.hata) + '</span>';
-  else if (lastFetch) h += '<br>Ekran ' + lastFetch.toLocaleTimeString('tr-TR', {hour: '2-digit', minute: '2-digit'}) + '\'de yenilendi · her 60 sn';
-  $('updInfo').innerHTML = h;
-  document.documentElement.style.setProperty('--hh', $('top').offsetHeight + 'px');
+  const g = parseTR(D.guncelleme);
+  let s = 'Güncel: ' + esc((D.guncelleme || '').slice(11, 16)) + ' (' + ago(g) + ')';
+  if (OFFLINE) s += ' · çevrimdışı kopya';
+  $('upd').innerHTML = s;
 }
-
-/* ---------- veri ---------- */
 let sig = '';
 function apply(data) {
-  const s = data.guncelleme + '|' + data.fleet_zaman + '|' + data.loads.length + '|' + data.quotes.length + '|' + data.data_mtime;
   D = data; lastFetch = new Date(); index();
-  if (s !== sig) { sig = s; setupFilters(); drawMap(); if (sel) { renderSel(); highlight(sel.kind, sel.id); } }
-  renderCounters(); render(); renderUpd();
+  const s = [D.guncelleme, D.fleet_zaman, D.loads.length, D.quotes.length, D.data_mtime, D.yayin_zamani].join('|');
+  if (s !== sig) { sig = s; drawMap(); if (sel) { renderSel(); } }
+  render(); renderUpd();
 }
 async function fetchData(manual) {
   if (OFFLINE) return;
   try {
-    if (SRC) { apply(await SRC()); if (manual) toast('Veriler yenilendi'); return; }
-    const r = await fetch('api/data', {credentials: 'same-origin', cache: 'no-store'});
-    if (r.status === 401) { location.href = 'login'; return; }
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    apply(await r.json()); if (manual) toast('Veriler yenilendi');
-  } catch (e) { $('updInfo').insertAdjacentHTML('beforeend', '<br><span class="bad">Bağlantı hatası: ' + esc(e.message) + ' – tekrar denenecek</span>'); }
+    if (SRC) apply(await SRC());
+    else { const r = await fetch('api/data', {credentials: 'same-origin', cache: 'no-store'}); if (r.status === 401) { location.href = 'login'; return; } if (!r.ok) throw new Error('HTTP ' + r.status); apply(await r.json()); }
+    if (manual) toast('Güncellendi');
+  } catch (e) { $('upd').textContent = 'Bağlantı sorunu, tekrar denenecek'; }
 }
-let ft;
-['fSearch', 'fCountry', 'fVeh', 'fAdr', 'fSrc', 'fFrom', 'fTo'].forEach(id => $(id).addEventListener(id === 'fSearch' ? 'input' : 'change', () => { clearTimeout(ft); ft = setTimeout(() => { drawMap(); render(); }, id === 'fSearch' ? 200 : 0); }));
-$('fClear').onclick = () => { ['fSearch', 'fCountry', 'fVeh', 'fAdr', 'fSrc', 'fFrom', 'fTo'].forEach(id => $(id).value = ''); drawMap(); render(); };
 $('btnReload').onclick = () => OFFLINE ? toast('Çevrimdışı kopya') : fetchData(true);
-$('btnFleet').onclick = async () => { if (OFFLINE) return toast('Çevrimdışı kopya'); const r = await fetch('api/refresh-fleet', {method: 'POST', credentials: 'same-origin'}); toast(r.ok ? '{{FL}} konumları güncelleniyor… (~30 sn)' : 'Başlatılamadı'); setTimeout(() => fetchData(), 30000); };
-if (OFFLINE) { $('btnLogout').classList.add('hidden'); }
-if (SRC) { $('btnFleet').classList.add('hidden'); $('btnLogout').onclick = (e) => { e.preventDefault(); if (window.APP_LOGOUT) window.APP_LOGOUT(); }; }
-$('mobToggle').onclick = () => $('side').scrollIntoView({behavior: 'smooth'});
-window.addEventListener('resize', () => { document.documentElement.style.setProperty('--hh', $('top').offsetHeight + 'px'); map.invalidateSize(); });
+if (SRC && $('btnLogout')) $('btnLogout').onclick = (e) => { e.preventDefault(); if (window.APP_LOGOUT) window.APP_LOGOUT(); };
+window.addEventListener('resize', () => map.invalidateSize());
 if (OFFLINE) apply(window.EMBEDDED_DATA); else { fetchData(); setInterval(fetchData, POLL_MS); }
 setInterval(() => D && renderUpd(), 30000);
+setTimeout(() => map.invalidateSize(), 300);
 })();
