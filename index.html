@@ -68,7 +68,7 @@ const LS = 'opk1';
 const b64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const ub64 = (u) => btoa(String.fromCharCode.apply(null, new Uint8Array(u)));
 let KEY = null, SALT = null, FIRST = null;
-async function getEnc() { const srcs = ['https://raw.githubusercontent.com/kns3595-bedir/bedir-panel/main/data.enc.json?t=' + Date.now(), 'data.enc.json?t=' + Date.now()]; let last; for (const u of srcs) { try { const r = await fetch(u, {cache: 'no-store'}); if (r.ok) return r.json(); last = r.status; } catch (e) { last = e.message; } } throw new Error('Veri dosyası alınamadı (' + last + ')'); }
+async function getEnc() { const srcs = ['https://raw.githubusercontent.com/' + location.hostname.split('.')[0] + '/' + location.pathname.split('/')[1] + '/main/data.enc.json?t=' + Date.now(), 'data.enc.json?t=' + Date.now()]; let last; for (const u of srcs) { try { const r = await fetch(u, {cache: 'no-store'}); if (r.ok) return r.json(); last = r.status; } catch (e) { last = e.message; } } throw new Error('Veri dosyası alınamadı (' + last + ')'); }
 async function derive(pw, e, extractable) {
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey({name: 'PBKDF2', hash: e.hash || 'SHA-256', salt: b64(e.salt), iterations: e.iter}, base, {name: 'AES-GCM', length: 256}, extractable, ['decrypt']);
