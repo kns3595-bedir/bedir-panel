@@ -50,11 +50,13 @@ const cityOf = (yakin) => String(yakin || '').replace(/\s*\(.*$/, '');
 function decodePoly(str) { let i = 0, lat = 0, lng = 0; const out = []; while (i < str.length) { let b, sh = 0, r = 0; do { b = str.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32); lat += (r & 1) ? ~(r >> 1) : (r >> 1); sh = 0; r = 0; do { b = str.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32); lng += (r & 1) ? ~(r >> 1) : (r >> 1); out.push([lat / 1e5, lng / 1e5]); } return out; }
 /* ---------- fiyat (sadece bu ekranda, kaydedilmez) ---------- */
 const PRICES = {};
-function priceStr(id, lang) { const p = PRICES[id]; if (!p || !p.v) return ''; const n = Number(String(p.v).replace(/[^\d]/g, '')); if (!n) return '';
+function priceStr(id, lang) { const p = PRICES[id]; if (!p || !p.v) return ''; if (!p.c) p.c = (itemOf(id) || {}).para || 'EUR'; const n = Number(String(p.v).replace(/[^\d]/g, '')); if (!n) return '';
   return lang === 'tr' ? n.toLocaleString('tr-TR') + ' ' + p.c : p.c + ' ' + n.toLocaleString('en-US'); }
-function quoteText(it) { const ps = priceStr(it.id, it.dil); return String(it.teklif_metni || '').replace('[FİYAT]', ps || '[FİYAT]'); }
+function curOf(it) { return (PRICES[it.id] || {}).c || it.para || 'EUR'; }
+function quoteText(it) { const ps = priceStr(it.id, it.dil); const suf = {EUR: "'dur", USD: "'dir", TL: "'dir"}[curOf(it)] || "'dir";
+  return String(it.teklif_metni || '').replace(/\[FİYAT\]\{ek\}/g, ps ? ps + suf : '[FİYAT]' + suf).replace(/\[FİYAT\]/g, ps || '[FİYAT]'); }
 function previewHtml(it) { return esc(quoteText(it)).replace('[FİYAT]', '<mark>[FİYAT]</mark>'); }
-function priceBox(it) { const p = PRICES[it.id] || {v: '', c: 'EUR'};
+function priceBox(it) { const p = PRICES[it.id] || {v: '', c: it.para || 'EUR'};
   return '<div class="priceRow"><label class="pl">Fiyatın</label><input class="pin" inputmode="numeric" placeholder="ör. 4500" data-pid="' + esc(it.id) + '" value="' + esc(p.v) + '">' +
     '<select class="pcur" data-pid="' + esc(it.id) + '">' + ['EUR', 'USD', 'TL'].map(c => '<option' + (c === p.c ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></div>'; }
 
@@ -114,7 +116,7 @@ function facts(it, kind) {
   const veh = kind === 'quote' ? it.arac : (it.vgrup || it.arac);
   const cargo = kind === 'quote' ? it.yuk : [it.urun && !/genel kargo/i.test(it.urun) ? it.urun : '', it.agirlik, it.adet].filter(Boolean).join(' · ');
   return '<div class="facts">' +
-    '<div><span>Yükleme</span><b>' + esc(date || 'tarih yazmıyor') + '</b></div>' +
+    '<div><span>Yükleme</span><b>' + esc(date || 'belirtilmemiş') + '</b></div>' +
     '<div><span>Araç</span><b>' + esc(veh || '—') + (it.adr ? ' <span class="tag red">ADR</span>' : '') + '</b></div>' +
     '<div class="wide"><span>Yük</span><b>' + esc(cargo || 'yazmıyor') + '</b></div></div>';
 }
@@ -203,7 +205,7 @@ function renderSel() {
     const own = !!IDX.fleet[sel.id]; const ms = (IDX.mByTruck[sel.id] || []).slice().sort((a, b) => (a.bos_km ?? a.km) - (b.bos_km ?? b.km));
     h = '<div class="card selCard"><div class="cTop"><div><div class="cName">' + (own ? '🚚 ' + esc(t.plaka) : esc(cleanCo(t.firma_k))) + '</div><div class="muted">' + (own ? esc(cityOf(t.yakin)) + ' – ' + esc(FL_ST[t.durum] || t.durum) + ' · son sinyal ' + esc(t.son || '—') : esc(t.bolge) + ' · ' + esc(t.arac)) + '</div></div><button class="x" id="selX" aria-label="Kapat">✕</button></div>' +
       (ms.length ? '<div class="selSub">Bu araca uygun yükler</div>' + ms.slice(0, 8).map(m => { const it = itemOf(m.item) || {};
-        return '<div class="line click" data-item="' + esc(m.item) + '" data-kind="' + (m.tur === 'teklif' ? 'quote' : 'load') + '"><b>' + esc(cleanCo(it.firma_k)) + '</b> – ' + esc(routeTxt(it)) + '<div class="muted small">' + esc(winTxt(it.win, it.yukleme_tarihi, it.tarih_belirsiz) || 'tarih yazmıyor') + ' · boş ' + kmTxt(m.bos_km ?? m.km, m.bos_km == null || m.bos_yaklasik) + ' · yol ' + kmTxt(it.km, it.km_yaklasik) + '</div></div>'; }).join('') : '<div class="line muted">Şu an bu araca uygun yük yok.</div>') + '</div>';
+        return '<div class="line click" data-item="' + esc(m.item) + '" data-kind="' + (m.tur === 'teklif' ? 'quote' : 'load') + '"><b>' + esc(cleanCo(it.firma_k)) + '</b> – ' + esc(routeTxt(it)) + '<div class="muted small">' + esc(winTxt(it.win, it.yukleme_tarihi, it.tarih_belirsiz) || 'belirtilmemiş') + ' · boş ' + kmTxt(m.bos_km ?? m.km, m.bos_km == null || m.bos_yaklasik) + ' · yol ' + kmTxt(it.km, it.km_yaklasik) + '</div></div>'; }).join('') : '<div class="line muted">Şu an bu araca uygun yük yok.</div>') + '</div>';
   }
   box.innerHTML = h;
   $('selX').onclick = () => { sel = null; renderSel(); fitFleet(); };
@@ -220,7 +222,7 @@ function fleetDeals() {
 function renderToday() {
   const open = D.quotes.filter(isOpenQ).sort((a, b) => (b.acil|0) - (a.acil|0) || (a.bekleme||0) - (b.bekleme||0));
   const deals = fleetDeals();
-  const wait = D.quotes.filter(q => !isOpenQ(q)).map(q => ({ad: cleanCo(q.firma_k), r: routeTxt(q), s: q.sent, g: q.bekleme, link: q.link, km: q.km, ap: q.km_yaklasik}))
+  const wait = D.quotes.filter(q => !isOpenQ(q)).map(q => ({ad: cleanCo(q.firma_k), r: routeTxt(q), s: q.sent || (q.cevap ? 'Cevap yazıldı ' + q.cevap.slice(0, 5) + ' ' + q.cevap.slice(11) : ''), g: q.bekleme, link: q.link, km: q.km, ap: q.km_yaklasik}))
     .concat(D.other.filter(o => o.durum !== 'Yeni').map(o => ({ad: cleanCo(o.firma), r: o.konu, s: '', g: (() => { const d = parseTR(o.gelis); return d ? Math.floor((new Date(D.bugun) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5) : null; })(), link: gmail(o.thread)})))
     .sort((a, b) => (b.g || 0) - (a.g || 0));
   const newMail = D.other.filter(o => o.durum === 'Yeni');
@@ -228,10 +230,10 @@ function renderToday() {
     (newMail.length ? newMail.map(o => '<div class="row2"><div><b>' + esc(cleanCo(o.firma)) + '</b> – ' + esc(o.konu) + '</div><a class="sm" target="_blank" rel="noopener" href="' + gmail(o.thread) + '">Cevapla ✉️</a></div>').join('') : '') + '</div>';
   h += '<div class="blk"><h2>2 · Aracım var, yük var <span class="cnt">' + deals.length + '</span></h2>' +
     (deals.length ? deals.slice(0, 10).map(m => { const f = IDX.fleet[m.arac], it = IDX.load[m.item]; if (!f || !it) return '';
-      const where = f.durum === 'driving' ? cityOf(f.yakin) + ' yakınında yolda' : cityOf(f.yakin) + '\'de duruyor';
+      const where = (f.durum === 'driving' ? cityOf(f.yakin) + ' yakınında yolda' : cityOf(f.yakin) + '\'de duruyor') + (f.sefer ? ' · ' + f.sefer : '');
       return '<div class="deal" data-sel="load:' + esc(it.id) + '"><div class="dTruck">🚚 ' + esc(f.plaka) + ' <span class="muted">' + esc(where) + '</span></div>' +
         '<div class="dLoad">→ <b>' + esc(cleanCo(it.firma_k)) + '</b> · ' + esc(routeTxt(it)) + '</div>' +
-        '<div class="dKm"><span><b>' + kmTxt(m.bos_km ?? m.km, m.bos_km == null || m.bos_yaklasik) + '</b> boş</span><span><b>' + kmTxt(it.km, it.km_yaklasik) + '</b> yol</span><span>' + esc(winTxt(it.win, it.yukleme_tarihi, it.tarih_belirsiz) || 'tarih yazmıyor') + '</span><span>' + esc(it.vgrup || it.arac || '') + (it.adr ? ' · ADR' : '') + '</span></div>' +
+        '<div class="dKm"><span><b>' + kmTxt(m.bos_km ?? m.km, m.bos_km == null || m.bos_yaklasik) + '</b> boş</span><span><b>' + kmTxt(it.km, it.km_yaklasik) + '</b> yol</span><span>' + esc(winTxt(it.win, it.yukleme_tarihi, it.tarih_belirsiz) || 'belirtilmemiş') + '</span><span>' + esc(it.vgrup || it.arac || '') + (it.adr ? ' · ADR' : '') + '</span></div>' +
         (m.flags && m.flags.length ? '<div class="muted small">' + esc(plainFlags(m.flags)) + '</div>' : '') + '</div>'; }).join('')
       : '<div class="empty">Şu an araçlarımıza yakın yük yok.</div>') + '</div>';
   h += '<div class="blk"><h2>3 · Bekleyen <span class="cnt">' + wait.length + '</span></h2>' + (wait.map(w => '<div class="row2"><div><b>' + esc(w.ad) + '</b> – ' + esc(w.r) + (w.km ? ' <span class="muted">(' + kmTxt(w.km, w.ap) + ')</span>' : '') + (w.s ? '<div class="muted small">Verdiğin fiyat: ' + esc(w.s) + '</div>' : '') + '</div><div class="right"><span class="tag' + ((w.g || 0) >= 5 ? ' red' : '') + '">' + (w.g == null ? '' : w.g + ' gündür cevap yok') + '</span>' + (w.link ? '<a class="sm" target="_blank" rel="noopener" href="' + esc(w.link) + '">Gmail</a>' : '') + '</div></div>').join('') || '<div class="empty">Bekleyen yok.</div>') + '</div>';
@@ -294,7 +296,7 @@ function renderDetail() {
       {h: 'Müşteri', k: 'firma_k', r: r => esc(cleanCo(r.firma_k))},
       {h: 'Nereden → Nereye', k: 'r', r: r => esc(routeTxt(r))},
       {h: 'Yol', k: 'km', r: r => '<b>' + kmTxt(r.km, r.km_yaklasik) + '</b>', sv: r => r.km || 0},
-      {h: 'Durum', k: 'durum', r: r => isOpenQ(r) ? 'Teklif verilecek' : 'Cevap bekleniyor'},
+      {h: 'Durum', k: 'durum', r: r => isOpenQ(r) ? 'Teklif verilecek' : (r.durum === 'Cevaplandı' ? 'Cevap yazıldı' : 'Müşteri cevabı bekleniyor')},
       {h: 'Verdiğin fiyat', k: 'sent', r: r => esc(r.sent || '—')},
       {h: 'Geldi', k: 'bekleme', r: r => esc(daysTxt(r.bekleme))},
       {h: '', k: 'link', r: r => gm(r.link)},
@@ -319,11 +321,11 @@ function renderDetail() {
 /* ---------- ortak bağlamalar ---------- */
 function refreshPreviews(id) { const it = itemOf(id); if (!it) return; document.querySelectorAll('#qt-' + CSS.escape(id) + ', #qt-s-' + CSS.escape(id)).forEach(p => p.innerHTML = previewHtml(it));
   document.querySelectorAll('.pin[data-pid="' + CSS.escape(id) + '"]').forEach(i => { if (i !== document.activeElement) i.value = (PRICES[id] || {}).v || ''; });
-  document.querySelectorAll('.pcur[data-pid="' + CSS.escape(id) + '"]').forEach(i => i.value = (PRICES[id] || {}).c || 'EUR'); }
+  document.querySelectorAll('.pcur[data-pid="' + CSS.escape(id) + '"]').forEach(i => i.value = (PRICES[id] || {}).c || (itemOf(id) || {}).para || 'EUR'); }
 function bindCommon(el) {
   el.querySelectorAll('[data-copy]').forEach(b => b.onclick = (e) => { e.stopPropagation(); e.preventDefault(); const it = itemOf(b.dataset.copy); if (!it || !it.teklif_metni) return toast('Bu iş için teklif metni yok');
     copyText(quoteText(it)).then(() => { if (!priceStr(it.id, it.dil)) toast('✓ Kopyalandı – fiyat boş, [FİYAT] yerine yazmayı unutma'); }); });
-  el.querySelectorAll('.pin').forEach(i => { i.onclick = (e) => e.stopPropagation(); i.oninput = () => { const id = i.dataset.pid; PRICES[id] = Object.assign({c: 'EUR'}, PRICES[id], {v: i.value}); refreshPreviews(id); }; });
+  el.querySelectorAll('.pin').forEach(i => { i.onclick = (e) => e.stopPropagation(); i.oninput = () => { const id = i.dataset.pid; PRICES[id] = Object.assign({c: (itemOf(id) || {}).para || 'EUR'}, PRICES[id], {v: i.value}); refreshPreviews(id); }; });
   el.querySelectorAll('.pcur').forEach(i => { i.onclick = (e) => e.stopPropagation(); i.onchange = () => { const id = i.dataset.pid; PRICES[id] = Object.assign({v: ''}, PRICES[id], {c: i.value}); refreshPreviews(id); }; });
   el.querySelectorAll('[data-sel]').forEach(a => a.onclick = (e) => { if (e.target.closest('a[target], button[data-copy], input, select')) return; e.preventDefault(); const [k, id] = a.dataset.sel.split(':'); select(k, id); });
   el.querySelectorAll('[data-show]').forEach(a => a.onclick = (e) => { e.preventDefault(); const p = a.closest('.card, .pop').querySelector('pre.qt'); if (!p) return; p.classList.toggle('hidden'); a.textContent = p.classList.contains('hidden') ? 'Teklif metnini gör' : 'Metni gizle'; });
