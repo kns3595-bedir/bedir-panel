@@ -87,3 +87,6 @@ body.noScroll{overflow:hidden}
   #sel .selCard{margin:0}
   .nav{padding:8px 16px}.blk h2{font-size:22px}
 }
+div.qt{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px;margin:10px 0 0;overflow-x:auto;font-size:13px}
+div.qt.qh table{width:100%!important;max-width:100%}
+div.qt mark{background:#fde047;color:#0f172a;font-weight:800;padding:0 3px;border-radius:3px}
