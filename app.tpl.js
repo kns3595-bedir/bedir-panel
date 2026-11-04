@@ -17,8 +17,8 @@ function parseTR(s) { const m = /(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2}))
 function ago(d) { if (!d) return ''; const m = Math.round((Date.now() - d.getTime()) / 60000); if (m < 1) return 'az önce'; if (m < 60) return m + ' dk önce'; const h = Math.round(m/60); if (h < 48) return h + ' saat önce'; return Math.round(h/24) + ' gün önce'; }
 function daysTxt(n) { return n == null ? '' : n === 0 ? 'bugün geldi' : n === 1 ? 'dün geldi' : n + ' gün önce geldi'; }
 function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove('on'), 2000); }
-async function copyText(t) {
-  try { await navigator.clipboard.writeText(t); }
+async function copyText(t, html) {
+  try { if (html && window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({'text/html': new Blob([html], {type: 'text/html'}), 'text/plain': new Blob([t], {type: 'text/plain'})})]); else await navigator.clipboard.writeText(t); }
   catch (e) { const ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
   toast('✓ Teklif kopyalandı – Gmail\'de yanıta yapıştır');
 }
@@ -51,11 +51,12 @@ function decodePoly(str) { let i = 0, lat = 0, lng = 0; const out = []; while (i
 /* ---------- fiyat (sadece bu ekranda, kaydedilmez) ---------- */
 const PRICES = {};
 function priceStr(id, lang) { const p = PRICES[id]; if (!p || !p.v) return ''; if (!p.c) p.c = (itemOf(id) || {}).para || 'EUR'; const n = Number(String(p.v).replace(/[^\d]/g, '')); if (!n) return '';
-  return lang === 'tr' ? n.toLocaleString('tr-TR') + ' ' + p.c : p.c + ' ' + n.toLocaleString('en-US'); }
+  return (lang === 'tr' ? n.toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})) + ' ' + p.c; }
 function curOf(it) { return (PRICES[it.id] || {}).c || it.para || 'EUR'; }
-function quoteText(it) { const ps = priceStr(it.id, it.dil); const suf = {EUR: "'dur", USD: "'dir", TL: "'dir"}[curOf(it)] || "'dir";
-  return String(it.teklif_metni || '').replace(/\[FİYAT\]\{ek\}/g, ps ? ps + suf : '[FİYAT]' + suf).replace(/\[FİYAT\]/g, ps || '[FİYAT]'); }
-function previewHtml(it) { return esc(quoteText(it)).replace('[FİYAT]', '<mark>[FİYAT]</mark>'); }
+function quoteText(it) { const ps = priceStr(it.id, it.dil); return String(it.teklif_metni || '').replace(/\[FİYAT\]/g, ps || '[FİYAT]'); }
+function quoteHtml(it) { const ps = priceStr(it.id, it.dil); return String(it.teklif_html || '').replace(/\[FİYAT\]/g, ps ? esc(ps) : '<mark>[FİYAT]</mark>'); }
+function composeUrl(it) { const p = new URLSearchParams({view: 'cm', fs: '1', to: it.email || '', cc: it.cc_oneri || '', su: it.konu || ''}); return 'https://mail.google.com/mail/?' + p.toString(); }
+function previewHtml(it) { return it.teklif_html ? quoteHtml(it) : esc(quoteText(it)).replace('[FİYAT]', '<mark>[FİYAT]</mark>'); }
 function priceBox(it) { const p = PRICES[it.id] || {v: '', c: it.para || 'EUR'};
   return '<div class="priceRow"><label class="pl">Fiyatın</label><input class="pin" inputmode="numeric" placeholder="ör. 4500" data-pid="' + esc(it.id) + '" value="' + esc(p.v) + '">' +
     '<select class="pcur" data-pid="' + esc(it.id) + '">' + ['EUR', 'USD', 'TL'].map(c => '<option' + (c === p.c ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></div>'; }
@@ -130,9 +131,10 @@ function card(it, kind, opts) {
     '<div class="cKm">' + kmTxt(it.km, it.km_yaklasik) + ' <span>karayolu' + (it.km_yaklasik ? ' (yaklaşık)' : '') + '</span></div>' +
     facts(it, kind) + ownLine(it) +
     (it.teklif_metni ? priceBox(it) : '') +
-    '<div class="btnRow">' + (it.teklif_metni ? '<button class="big pri" data-copy="' + esc(it.id) + '">📋 Teklifi kopyala</button>' : '') + (it.link ? '<a class="big" target="_blank" rel="noopener" href="' + esc(it.link) + '">✉️ Gmail\'de aç</a>' : '') + '</div>' +
+    '<div class="btnRow">' + (it.teklif_metni ? '<button class="big pri" data-copy="' + esc(it.id) + '">📋 Teklifi kopyala</button>' : '') + (it.konu ? '<a class="big" target="_blank" rel="noopener" href="' + esc(composeUrl(it)) + '">✉️ Gmail\'de aç</a>' : it.link ? '<a class="big" target="_blank" rel="noopener" href="' + esc(it.link) + '">✉️ Gmail\'de aç</a>' : '') + '</div>' +
+    (it.konu ? '<div class="muted small">Konu: <b>' + esc(it.konu) + '</b> · CC ' + esc(it.cc_oneri || '') + (it.link ? ' · <a target="_blank" rel="noopener" href="' + esc(it.link) + '">talep thread\'inde yanıtla</a>' : '') + '</div>' : '') +
     '<div class="cLinks">' + (opts.mapLink === false ? '' : '<a href="#" data-sel="' + kind + ':' + esc(it.id) + '">🗺 Haritada rota</a> · ') + (it.teklif_metni ? '<a href="#" data-show="' + esc(it.id) + '">Teklif metnini gör</a>' : '') + '</div>' +
-    (it.teklif_metni ? '<pre class="qt hidden" id="qt-' + esc(opts.close ? 's-' : '') + esc(it.id) + '">' + previewHtml(it) + '</pre>' : '') + '</div>';
+    (it.teklif_metni ? '<div class="qt hidden' + (it.teklif_html ? ' qh' : '') + '" id="qt-' + esc(opts.close ? 's-' : '') + esc(it.id) + '">' + previewHtml(it) + '</div>' : '') + '</div>';
 }
 function popupHtml(it, kind) {
   const t = ownTruckFor(it);
@@ -324,7 +326,7 @@ function refreshPreviews(id) { const it = itemOf(id); if (!it) return; document.
   document.querySelectorAll('.pcur[data-pid="' + CSS.escape(id) + '"]').forEach(i => i.value = (PRICES[id] || {}).c || (itemOf(id) || {}).para || 'EUR'); }
 function bindCommon(el) {
   el.querySelectorAll('[data-copy]').forEach(b => b.onclick = (e) => { e.stopPropagation(); e.preventDefault(); const it = itemOf(b.dataset.copy); if (!it || !it.teklif_metni) return toast('Bu iş için teklif metni yok');
-    copyText(quoteText(it)).then(() => { if (!priceStr(it.id, it.dil)) toast('✓ Kopyalandı – fiyat boş, [FİYAT] yerine yazmayı unutma'); }); });
+    copyText(quoteText(it), it.teklif_html ? quoteHtml(it).replace(/<\/?mark>/g, '') : '').then(() => { if (!priceStr(it.id, it.dil)) toast('✓ Kopyalandı – fiyat boş, [FİYAT] yerine yazmayı unutma'); }); });
   el.querySelectorAll('.pin').forEach(i => { i.onclick = (e) => e.stopPropagation(); i.oninput = () => { const id = i.dataset.pid; PRICES[id] = Object.assign({c: (itemOf(id) || {}).para || 'EUR'}, PRICES[id], {v: i.value}); refreshPreviews(id); }; });
   el.querySelectorAll('.pcur').forEach(i => { i.onclick = (e) => e.stopPropagation(); i.onchange = () => { const id = i.dataset.pid; PRICES[id] = Object.assign({v: ''}, PRICES[id], {c: i.value}); refreshPreviews(id); }; });
   el.querySelectorAll('[data-sel]').forEach(a => a.onclick = (e) => { if (e.target.closest('a[target], button[data-copy], input, select')) return; e.preventDefault(); const [k, id] = a.dataset.sel.split(':'); select(k, id); });
